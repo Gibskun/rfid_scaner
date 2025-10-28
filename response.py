@@ -33,7 +33,7 @@ class InventoryWorkMode(IntEnum):
 
 class Response:
     def __init__(self, response_bytes: bytes):
-        if response_bytes is None or len(response_bytes) < 6:
+        if response_bytes is None or len(response_bytes) < 5:
             raise ValueError(f"Response data is too short to be valid. Got {len(response_bytes) if response_bytes else 0} bytes.")
             
         self.response_bytes = response_bytes
@@ -46,11 +46,24 @@ class Response:
         self.command = response_bytes[2]
         self.status = response_bytes[3]  # Check 5. LIST OF COMMAND EXECUTION RESULT STATUS
         
-        # Fix data extraction - should be from byte 4 to length-2 (excluding 2-byte checksum)
-        self.data = response_bytes[4: self.length - 2] if self.length > 6 else b''
+        # Fix data extraction - handle both 5-byte (no data) and longer responses
+        if self.length > 5:
+            # Has data: from byte 4 to length-2 (excluding 2-byte checksum)
+            self.data = response_bytes[4: self.length - 2]
+        else:
+            # No data (5-byte response): just status
+            self.data = b''
         
-        # Fix checksum extraction - last 2 bytes
-        self.checksum = response_bytes[self.length - 2: self.length]
+        # Fix checksum extraction - handle both 5-byte and longer responses
+        if self.length >= 5:
+            if self.length == 5:
+                # 5-byte response: last byte is simple checksum
+                self.checksum = response_bytes[4:5]
+            else:
+                # Longer response: last 2 bytes are checksum
+                self.checksum = response_bytes[self.length - 2: self.length]
+        else:
+            self.checksum = b''
         
         # Handle work mode response (command 0x36)
         if self.command == 0x36 and len(self.data) >= 1:

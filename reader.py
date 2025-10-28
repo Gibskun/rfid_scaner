@@ -52,35 +52,91 @@ class Reader:
         try:
             response = Response(response_data)
             
-            if response.status != 0x00:
-                return
-                
-            if response.command == 0x01 and len(response.data) >= 1:  # CMD_INVENTORY
-                tag_count = response.data[0]
-                
-                if tag_count == 0:
-                    return
+            # Add debug info for tag responses
+            if response.status == 0x01 and len(response.data) > 0:
+                print(f"🔍 Tag response detected: Status=0x{response.status:02X}, Data={[f'0x{b:02X}' for b in response.data]}")
+            
+            # Handle different response statuses
+            if response.status == 0x00:
+                # Success - check for tag data
+                if response.command == 0x01 and len(response.data) >= 1:  # CMD_INVENTORY
+                    tag_count = response.data[0]
                     
-                tags_data = response.data[1:]
-                
-                data_pointer = 0
-                for tag_num in range(tag_count):
-                    if data_pointer >= len(tags_data):
-                        break
+                    if tag_count == 0:
+                        return
                         
-                    tag_length = tags_data[data_pointer]
-                    tag_start = data_pointer + 1
-                    tag_end = tag_start + tag_length
+                    tags_data = response.data[1:]
                     
-                    if tag_end <= len(tags_data):
-                        tag_data = tags_data[tag_start:tag_end]
-                        yield tag_data
-                        data_pointer = tag_end
+                    data_pointer = 0
+                    for tag_num in range(tag_count):
+                        if data_pointer >= len(tags_data):
+                            break
+                            
+                        tag_length = tags_data[data_pointer]
+                        tag_start = data_pointer + 1
+                        tag_end = tag_start + tag_length
+                        
+                        if tag_end <= len(tags_data):
+                            tag_data = tags_data[tag_start:tag_end]
+                            yield tag_data
+                            data_pointer = tag_end
+                        else:
+                            break
+            
+            elif response.status == 0x01:
+                # Tag detected - parse based on data structure
+                # For 11-byte frames like: 0B 00 01 01 01 04 00 00 00 01 1F
+                # Structure: [length] [addr] [cmd] [status] [tag_count] [tag_len] [tag_data...] [checksum]
+                
+                if len(response.data) >= 2:  # At least tag_count + tag_length
+                    tag_count = response.data[0]  # First data byte is tag count
+                    
+                    if tag_count > 0:
+                        tags_data = response.data[1:]  # Skip tag count
+                        
+                        data_pointer = 0
+                        for tag_num in range(min(tag_count, 10)):  # Limit to reasonable number
+                            if data_pointer >= len(tags_data):
+                                break
+                                
+                            # Check if we have at least the tag length byte
+                            if data_pointer < len(tags_data):
+                                tag_length = tags_data[data_pointer]
+                                tag_start = data_pointer + 1
+                                tag_end = tag_start + tag_length
+                                
+                                if tag_end <= len(tags_data) and tag_length > 0:
+                                    tag_data = tags_data[tag_start:tag_end]
+                                    yield tag_data
+                                    data_pointer = tag_end
+                                else:
+                                    # If structured parsing fails, treat remaining as single tag
+                                    remaining_data = tags_data[data_pointer:]
+                                    if len(remaining_data) >= 2:  # At least some tag data
+                                        yield remaining_data
+                                    break
+                            else:
+                                break
                     else:
-                        break
+                        # Tag count is 0 but status is 0x01 - might be different format
+                        # Treat all data as one tag
+                        if len(response.data) > 1:
+                            yield response.data[1:]  # Skip the first byte
+            
+            elif response.status == 0xFB:
+                # No tags found - this is normal, not an error
+                return
+            
+            else:
+                # Other status codes - might indicate errors but don't crash
+                if response.status not in [0x02, 0x03, 0x04]:  # Common non-error codes
+                    print(f"⚠️  Inventory status: 0x{response.status:02X}")
+                return
                         
         except Exception as e:
-            print(f"⚠️  Inventory parsing error: {e}")
+            # Only print parsing errors for unexpected issues
+            if "Response data is too short" not in str(e):
+                print(f"⚠️  Inventory parsing error: {e}")
 
     def inventory_active_mode(self) -> Iterator[Response]:
         while True:

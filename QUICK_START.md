@@ -1,28 +1,34 @@
-# RFID Scanner - Quick Start Guide
+# RFID Scanner - Auto-Start Quick Guide
 
-## 🚀 System Options
+## 🚀 AUTO-START OPTIONS - No Manual Clicking Required!
 
-### Option 1: Web Interface (Recommended) 🌐
+### Option 1: Auto-Launch Menu 🎯
 ```bash
-python launch_web.py    # Auto-opens browser
-# OR
-python web_interface.py # Manual browser to http://localhost:5000
+python auto_launch.py   # Interactive menu with auto-start options
 ```
 
-**Web Dashboard Features:**
+### Option 2: Web Interface (Auto-Start) 🌐
+```bash
+python launch_web.py    # Auto-opens browser + auto-starts scanning
+# OR
+python web_interface.py # Auto-starts when browser connects
+```
+
+**Web Dashboard Features (AUTO-START):**
 - 🖥️ **Real-time monitoring** with beautiful interface
-- 📊 **Live statistics** and performance metrics
+- � **Auto-start scanning** - begins immediately when connected
+- �📊 **Live statistics** and performance metrics
 - 🏷️ **Tag management** with signal strength indicators
 - 📱 **Mobile-friendly** responsive design
-- 🎛️ **Web controls** for start/stop scanning
 
-### Option 2: Terminal Interface 💻
+### Option 3: Terminal Interface (Auto-Start) 💻
 ```bash
-python main.py
+python main.py          # Immediately begins scanning - no waiting
 ```
 
-This runs the optimized terminal scanner with:
-- ⚡ **9+ scans per second** performance
+**Terminal Features (AUTO-START):**
+- ⚡ **9+ scans per second** performance with instant startup
+- 🚀 **Immediate connection** and scanning
 - 📍 **Distance estimation** based on detection frequency  
 - 🔧 **Advanced noise filtering** for reliable communication
 - 📊 **Real-time statistics** and tag tracking

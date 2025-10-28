@@ -49,6 +49,8 @@ class Transport(ABC):
                                 
                                 if self.debug:
                                     print(f"✅ Valid frame found: {len(frame_data)} bytes")
+                                    if len(frame_data) >= 4:
+                                        print(f"   📋 Frame: Length={frame_data[0]}, Addr=0x{frame_data[1]:02X}, Cmd=0x{frame_data[2]:02X}, Status=0x{frame_data[3]:02X}")
                                 
                                 return bytes(frame_data)
             

@@ -251,12 +251,13 @@
             <h1>🔖 RFID Scanner Dashboard</h1>
             <p class="subtitle">Real-time RFID tag monitoring system</p>
             <div class="controls">
-                <button id="startBtn" class="btn btn-primary">▶️ Start Scanning</button>
-                <button id="stopBtn" class="btn btn-danger">⏹️ Stop Scanning</button>
+                <div style="margin-top: 10px; color: #4299e1; font-weight: bold;">
+                    🚀 Auto-Start Enabled - Scanning begins automatically
+                </div>
             </div>
             <div class="connection-status">
                 <span class="status-indicator" id="statusIndicator"></span>
-                <span id="connectionStatus">Disconnected</span>
+                <span id="connectionStatus">Connected</span>
             </div>
         </div>
 
@@ -284,7 +285,7 @@
                 <h2 class="section-title">🏷️ Active RFID Tags</h2>
                 <div id="tagsList">
                     <div class="empty-state">
-                        No active tags detected. Click "Start Scanning" to begin monitoring.
+                        🚀 Auto-scanning started... Waiting for RFID tags to be detected.
                     </div>
                 </div>
             </div>
@@ -306,8 +307,6 @@
         let isScanning = false;
 
         // DOM elements
-        const startBtn = document.getElementById('startBtn');
-        const stopBtn = document.getElementById('stopBtn');
         const statusIndicator = document.getElementById('statusIndicator');
         const connectionStatus = document.getElementById('connectionStatus');
         const activeTags = document.getElementById('activeTags');
@@ -317,67 +316,68 @@
         const tagsList = document.getElementById('tagsList');
         const activityList = document.getElementById('activityList');
 
-        // Button event handlers
-        startBtn.addEventListener('click', () => {
-            socket.emit('start_scanning');
-            startBtn.disabled = true;
-            stopBtn.disabled = false;
-            isScanning = true;
-            document.body.classList.add('scanning');
-        });
-
-        stopBtn.addEventListener('click', () => {
-            socket.emit('stop_scanning');
-            startBtn.disabled = false;
-            stopBtn.disabled = true;
-            isScanning = false;
-            document.body.classList.remove('scanning');
-        });
-
         // Socket event handlers
         socket.on('connect', () => {
             console.log('Connected to server');
+            // Auto-start scanning animation when connected
+            document.body.classList.add('scanning');
         });
 
         socket.on('initial_data', (data) => {
-            updateStatistics(data.statistics);
-            updateTags(data.active_tags);
-            updateActivity(data.recent_activity);
+            updateFromSharedData(data);
+        });
+
+        socket.on('scan_status', (data) => {
+            // Scanning status is now handled by shared data
+            if (data.status === 'auto_started' || data.status === 'started') {
+                isScanning = true;
+                document.body.classList.add('scanning');
+                console.log('Scanning started automatically');
+            } else if (data.status === 'stopped') {
+                isScanning = false;
+                document.body.classList.remove('scanning');
+            }
         });
 
         socket.on('status_update', (data) => {
-            updateStatistics(data.statistics);
-            updateTags(data.active_tags);
+            updateFromSharedData(data);
         });
 
-        socket.on('new_tag', (data) => {
-            updateTags({[data.tag.full_id]: data.tag});
-            addActivity(data.activity);
-        });
-
-        socket.on('tag_removed', (data) => {
-            removeTag(data.tag_id);
-            addActivity(data.activity);
-        });
-
-        // Update functions
-        function updateStatistics(stats) {
-            activeTags.textContent = stats.active_tag_count;
-            totalScans.textContent = stats.total_scans.toLocaleString();
-            totalDetections.textContent = stats.total_detections.toLocaleString();
-            scanRate.textContent = stats.scan_rate.toFixed(1);
+        function updateFromSharedData(data) {
+            // Update statistics - use the statistics object from shared data
+            const stats = data.statistics || data;
+            activeTags.textContent = stats.active_tag_count || 0;
+            totalScans.textContent = (stats.total_scans || 0).toLocaleString();
+            totalDetections.textContent = (stats.total_detections || 0).toLocaleString();
+            scanRate.textContent = (stats.scan_rate || 0).toFixed(1);
 
             // Update connection status
-            connectionStatus.textContent = stats.connection_status;
+            const connStatus = stats.connection_status || 'Disconnected';
+            connectionStatus.textContent = connStatus;
             statusIndicator.className = 'status-indicator';
             
-            if (stats.connection_status === 'Connected') {
+            if (connStatus === 'Connected') {
                 statusIndicator.classList.add('status-connected');
-            } else if (stats.connection_status === 'Disconnected' || stats.connection_status === 'Stopped') {
+            } else if (connStatus === 'Disconnected' || connStatus === 'Stopped') {
                 statusIndicator.classList.add('status-disconnected');
             } else {
                 statusIndicator.classList.add('status-error');
             }
+
+            // Update active tags
+            if (data.active_tags) {
+                updateTags(data.active_tags);
+            }
+
+            // Update recent activity
+            if (data.recent_activity) {
+                updateActivity(data.recent_activity);
+            }
+        }
+
+        // Update functions (kept for compatibility)
+        function updateStatistics(stats) {
+            updateFromSharedData(stats);
         }
 
         function updateTags(tags) {
@@ -467,8 +467,7 @@
             }
         }
 
-        // Initialize button states
-        stopBtn.disabled = true;
+        // Auto-start system - no manual controls needed
     </script>
 </body>
 </html>
