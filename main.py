@@ -3,11 +3,13 @@
 RFID Reader - All-in-One System
 Runs both terminal scanner AND web interface simultaneously
 Single command: python main.py
+Includes database integration for tag storage and rewriting
 """
 
 from transport import SerialTransport
 from reader import Reader
 from response import Response, WorkMode, InventoryWorkMode
+from database import get_database
 import time
 import threading
 import webbrowser
@@ -29,6 +31,15 @@ class FastRFIDScanner:
         self.transport = None
         self.connected = False
         
+        # Database integration
+        try:
+            self.db = get_database()
+            print("✅ Database connected successfully")
+        except Exception as e:
+            print(f"⚠️  Database connection failed: {e}")
+            print("   System will continue without database features")
+            self.db = None
+        
         # Tag tracking with signal strength estimation
         self.active_tags: Dict[str, dict] = {}  # tag_id -> {first_seen, last_seen, count, data}
         self.total_detections = 0
@@ -37,6 +48,9 @@ class FastRFIDScanner:
         self.fast_scan_interval = 0.1  # 100ms between scans for fast detection
         self.cleanup_interval = 5.0    # Remove tags not seen for 5 seconds
         self.max_scan_failures = 5     # Max consecutive failures before reconnect
+        
+        # Interactive mode control (write functionality removed)
+        self.pause_scanning = False
         
     def connect(self) -> bool:
         """Connect to RFID reader with optimized settings"""
@@ -91,7 +105,7 @@ class FastRFIDScanner:
             return []
     
     def process_tags(self, tags: list):
-        """Process detected tags with shared data updates"""
+        """Process detected tags - prompt to write new tags not in database"""
         current_time = datetime.now()
         
         if tags:
@@ -107,8 +121,8 @@ class FastRFIDScanner:
                 # Check if this is a new tag for terminal display
                 is_new_tag = tag_hex not in self.active_tags
                 
-                # Update shared data system
-                add_tag_detection(tag_hex, tag)
+                # Update shared data system (for web interface)
+                add_tag_detection(tag_hex, tag, self.db)
                 
                 # Update local tracking
                 if tag_hex in self.active_tags:
@@ -132,7 +146,8 @@ class FastRFIDScanner:
                         'first_seen': current_time,
                         'last_seen': current_time,
                         'count': 1,
-                        'data': tag
+                        'data': tag,
+                        'prompted': False  # Track if user was already prompted
                     }
                     
                     print("=" * 60)
@@ -141,6 +156,30 @@ class FastRFIDScanner:
                     print(f"📊 Length: {len(tag)} bytes")
                     print(f"🔖 Data: {tag_hex}")
                     print(f"🔢 Raw bytes: {[hex(b) for b in tag]}")
+                    
+                    # Check if tag is in database
+                    tag_in_database = False
+                    if self.db:
+                        try:
+                            tag_info_db = self.db.get_tag_info(tag_hex)
+                            if tag_info_db:
+                                tag_in_database = True
+                                print(f"💾 Database: Tag found!")
+                                if tag_info_db.get('item_name'):
+                                    print(f"   Item: {tag_info_db['item_name']}")
+                                if tag_info_db.get('is_written'):
+                                    print(f"   Status: Written on {tag_info_db['write_date']}")
+                                else:
+                                    print(f"   Status: Not written yet")
+                            else:
+                                print(f"💾 Database: ⚠️  NEW TAG - Not in database!")
+                                print(f"   This tag needs to be written and registered.")
+                        except Exception as e:
+                            print(f"⚠️  Database lookup failed: {e}")
+                    
+                    # Write functionality removed - just log new tags
+                    if self.db and not tag_in_database:
+                        print("📝 Note: This is a new unregistered tag")
                     
                     # Try to parse as EPC
                     if len(tag) >= 12:
@@ -184,6 +223,11 @@ class FastRFIDScanner:
             self.optimize_reader_settings()
             
             while True:
+                # Check if scanning is paused (waiting for user input)
+                if self.pause_scanning:
+                    time.sleep(0.1)
+                    continue
+                
                 scan_start = time.time()
                 scan_count += 1
                 
@@ -247,13 +291,21 @@ class FastRFIDScanner:
                 print("🔌 Connection closed")
         except:
             pass
+    
+
 
 def run_terminal_scanner():
     """Run the terminal scanner in a separate thread"""
-    print("\n�️  TERMINAL SCANNER")
+    print("\n🖥️  TERMINAL SCANNER")
     print("=" * 40)
     
     scanner = FastRFIDScanner()
+    
+    # Share the database instance with web interface
+    if scanner.db:
+        print("🔗 Sharing database instance with web interface...")
+        from web_interface import set_database_instance
+        set_database_instance(scanner.db)
     
     try:
         print("🔌 Terminal: Connecting to RFID reader...")
@@ -293,10 +345,11 @@ def run_web_interface():
         web_server_thread.start()
         
         # Wait a moment then open browser
-        time.sleep(3)
+        time.sleep(2)
         try:
             webbrowser.open("http://localhost:5000")
-            print("🌍 Opened web browser - scanning will auto-start!")
+            print("🌍 Opened web browser - Main Dashboard loaded!")
+            print("🏷️  Click 'Enter RFID Registration System' to start scanning!")
         except:
             print("⚠️  Could not auto-open browser. Please visit: http://localhost:5000")
             
@@ -307,32 +360,36 @@ def main():
     """All-in-One RFID System - Terminal + Web Interface (Single Terminal)"""
     print("🚀 RFID ALL-IN-ONE SYSTEM")
     print("📅 Date:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-    print("🎯 Single command, single terminal - runs EVERYTHING!")
+    print("🎯 Dashboard-First Architecture - Professional Entry System")
     print("=" * 60)
+    print("🏠 Main Dashboard: Professional landing page with system overview")
+    print("🏷️  Registration System: Accessible via 'Register' button")
     print("🖥️  Terminal Scanner: Real-time tag detection in console")
     print("🌐 Web Interface: Dashboard at http://localhost:5000")
-    print("🚀 Both systems start automatically in ONE terminal!")
+    print("🚀 System starts with main dashboard first!")
+    print("🌍 Web browser will open automatically to main dashboard!")
     print("=" * 60)
     
     try:
-        # Start web interface in background (same terminal)
+        # Start web interface immediately in background (same terminal)
         print("⏳ Starting web interface...")
         web_thread = threading.Thread(target=run_web_interface)
         web_thread.daemon = True
         web_thread.start()
         
-        # Give web interface time to start
-        time.sleep(3)
-        
-        # Start terminal scanner in background thread too
+        # Start terminal scanner in background thread
         print("⏳ Starting terminal scanner...")
         terminal_thread = threading.Thread(target=run_terminal_scanner)
         terminal_thread.daemon = True
         terminal_thread.start()
         
+        # Give both systems a moment to initialize
+        time.sleep(1)
+        
         # Keep main thread alive to handle both systems
         print("✅ Both systems are running! Press Ctrl+C to stop everything.")
-        print("🌐 Web dashboard: http://localhost:5000")
+        print("� Main Dashboard: http://localhost:5000")
+        print("🏷️  Registration System: http://localhost:5000/register")
         print("🖥️  Terminal logs will appear below:")
         print("=" * 60)
         

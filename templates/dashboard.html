@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RFID Scanner Dashboard</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.0/socket.io.js"></script>
     <style>
         * {
             margin: 0;
@@ -17,211 +17,253 @@
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: #333;
             min-height: 100vh;
+            padding: 20px;
         }
 
         .container {
-            max-width: 1400px;
+            max-width: 1200px;
             margin: 0 auto;
-            padding: 20px;
         }
 
         .header {
             background: rgba(255, 255, 255, 0.95);
-            padding: 20px;
             border-radius: 15px;
-            text-align: center;
-            margin-bottom: 20px;
+            padding: 25px;
+            margin-bottom: 25px;
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-            backdrop-filter: blur(10px);
+            text-align: center;
         }
 
         .header h1 {
             color: #4a5568;
+            font-size: 2.5em;
             margin-bottom: 10px;
-            font-size: 2.5em;
         }
 
-        .header .subtitle {
-            color: #718096;
-            font-size: 1.1em;
-        }
-
-        .controls {
+        .status-bar {
             display: flex;
-            justify-content: center;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
             gap: 15px;
-            margin-top: 15px;
+            margin-top: 20px;
         }
 
-        .btn {
-            padding: 12px 24px;
-            border: none;
-            border-radius: 8px;
-            font-size: 16px;
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 15px;
+            background: rgba(255, 255, 255, 0.7);
+            border-radius: 25px;
             font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
         }
 
-        .btn-primary {
-            background: #48bb78;
-            color: white;
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
         }
 
-        .btn-primary:hover {
-            background: #38a169;
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(72, 187, 120, 0.4);
-        }
+        .status-connected { background-color: #48bb78; }
+        .status-disconnected { background-color: #f56565; }
 
-        .btn-danger {
-            background: #f56565;
-            color: white;
-        }
-
-        .btn-danger:hover {
-            background: #e53e3e;
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(245, 101, 101, 0.4);
-        }
-
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 20px;
-            margin-bottom: 20px;
-        }
-
-        .stat-card {
-            background: rgba(255, 255, 255, 0.95);
-            padding: 20px;
-            border-radius: 15px;
-            text-align: center;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-            backdrop-filter: blur(10px);
-            transition: transform 0.3s ease;
-        }
-
-        .stat-card:hover {
-            transform: translateY(-5px);
-        }
-
-        .stat-number {
-            font-size: 2.5em;
-            font-weight: bold;
-            color: #4299e1;
-            margin-bottom: 5px;
-        }
-
-        .stat-label {
-            color: #718096;
-            font-size: 0.9em;
-            text-transform: uppercase;
-            letter-spacing: 1px;
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
         }
 
         .main-content {
             display: grid;
-            grid-template-columns: 1fr 400px;
-            gap: 20px;
+            grid-template-columns: 1fr 1fr;
+            gap: 25px;
+            margin-bottom: 25px;
         }
 
-        .tags-section, .activity-section {
+        .panel {
             background: rgba(255, 255, 255, 0.95);
             border-radius: 15px;
             padding: 25px;
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-            backdrop-filter: blur(10px);
         }
 
-        .section-title {
-            font-size: 1.4em;
+        .panel h2 {
             color: #4a5568;
             margin-bottom: 20px;
-            border-bottom: 2px solid #e2e8f0;
-            padding-bottom: 10px;
+            font-size: 1.5em;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 2em;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .stat-label {
+            font-size: 0.9em;
+            opacity: 0.9;
+        }
+
+        .tag-list {
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
         }
 
         .tag-item {
-            background: #f8fafc;
-            border: 1px solid #e2e8f0;
-            border-radius: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
             padding: 15px;
-            margin-bottom: 12px;
-            transition: all 0.3s ease;
+            border-bottom: 1px solid #e2e8f0;
+            transition: background-color 0.2s;
         }
 
         .tag-item:hover {
-            border-color: #4299e1;
-            background: #ebf8ff;
+            background-color: #f7fafc;
+        }
+
+        .tag-item:last-child {
+            border-bottom: none;
+        }
+
+        .tag-info {
+            flex-grow: 1;
         }
 
         .tag-id {
             font-family: 'Courier New', monospace;
             font-weight: bold;
-            color: #2d3748;
-            margin-bottom: 8px;
-        }
-
-        .tag-details {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 10px;
-            font-size: 0.9em;
-            color: #718096;
-        }
-
-        .signal-strong { color: #48bb78; font-weight: bold; }
-        .signal-medium { color: #ed8936; font-weight: bold; }
-        .signal-weak { color: #f56565; font-weight: bold; }
-        .signal-new { color: #9f7aea; font-weight: bold; }
-
-        .activity-item {
-            padding: 10px;
-            border-left: 3px solid #4299e1;
-            background: #f8fafc;
-            margin-bottom: 10px;
-            border-radius: 0 8px 8px 0;
-        }
-
-        .activity-time {
-            font-weight: bold;
             color: #4a5568;
             font-size: 0.9em;
         }
 
-        .activity-message {
+        .tag-details {
+            font-size: 0.8em;
             color: #718096;
             margin-top: 5px;
         }
 
-        .status-indicator {
-            display: inline-block;
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-            margin-right: 8px;
+        .signal-strength {
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 0.7em;
+            font-weight: bold;
+            text-transform: uppercase;
         }
 
-        .status-connected { background: #48bb78; }
-        .status-disconnected { background: #f56565; }
-        .status-error { background: #ed8936; }
+        .signal-strong { background-color: #48bb78; color: white; }
+        .signal-medium { background-color: #ed8936; color: white; }
+        .signal-weak { background-color: #f56565; color: white; }
+        .signal-new { background-color: #4299e1; color: white; }
+
+        .activity-list {
+            max-height: 350px;
+            overflow-y: auto;
+        }
+
+        .activity-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            padding: 10px 0;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        .activity-time {
+            font-size: 0.8em;
+            color: #718096;
+            white-space: nowrap;
+            min-width: 60px;
+        }
+
+        .activity-message {
+            flex-grow: 1;
+            font-size: 0.9em;
+            color: #4a5568;
+        }
 
         .empty-state {
             text-align: center;
-            color: #a0aec0;
+            color: #718096;
             font-style: italic;
             padding: 40px;
         }
 
-        .connection-status {
+        .refresh-button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: transform 0.2s;
+        }
+
+        .refresh-button:hover {
+            transform: translateY(-2px);
+        }
+
+        .back-button {
+            background: rgba(255, 255, 255, 0.8);
+            color: #4a5568;
+            border: 2px solid rgba(102, 126, 234, 0.3);
+            padding: 10px 20px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .back-button:hover {
+            background: rgba(102, 126, 234, 0.1);
+            border-color: #667eea;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.3);
+        }
+
+        .header-controls {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            width: 100%;
+            margin-top: 15px;
+        }
+
+        .header-left {
             display: flex;
             align-items: center;
-            justify-content: center;
-            margin-top: 10px;
-            font-weight: 600;
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 10px;
         }
 
         @media (max-width: 768px) {
@@ -230,209 +272,417 @@
             }
             
             .stats-grid {
-                grid-template-columns: repeat(2, 1fr);
+                grid-template-columns: 1fr;
+            }
+            
+            .status-bar {
+                justify-content: center;
             }
         }
 
-        @keyframes pulse {
-            0% { opacity: 1; }
-            50% { opacity: 0.5; }
-            100% { opacity: 1; }
+        .footer {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 15px;
+            padding: 20px;
+            text-align: center;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            color: #718096;
         }
 
-        .scanning {
+        /* Modal Styles */
+        .modal {
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(5px);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal-content {
+            background: white;
+            border-radius: 15px;
+            padding: 0;
+            max-width: 500px;
+            width: 90%;
+            max-height: 90vh;
+            overflow-y: auto;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+            animation: modalSlideIn 0.3s ease-out;
+        }
+
+        @keyframes modalSlideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-50px) scale(0.9);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+            }
+        }
+
+        .modal-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 15px 15px 0 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-header h3 {
+            margin: 0;
+            font-size: 1.4em;
+        }
+
+        .close {
+            font-size: 2em;
+            cursor: pointer;
+            line-height: 1;
+            opacity: 0.8;
+            transition: opacity 0.2s;
+        }
+
+        .close:hover {
+            opacity: 1;
+        }
+
+        .modal-body {
+            padding: 25px;
+        }
+
+        .tag-registration-info {
+            background: #f8f9ff;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+
+        .tag-registration-info p {
+            margin: 8px 0;
+            font-size: 0.95em;
+        }
+
+        .registration-note {
+            color: #d69e2e;
+            font-weight: 500;
+            margin-top: 15px !important;
+            padding: 10px;
+            background: #fef5e7;
+            border-left: 4px solid #d69e2e;
+            border-radius: 4px;
+        }
+
+        .input-group {
+            margin-bottom: 20px;
+        }
+
+        .input-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #4a5568;
+        }
+
+        .input-group input {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 1em;
+            transition: border-color 0.2s;
+        }
+
+        .input-group input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .modal-buttons {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+
+        .btn {
+            padding: 12px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            flex: 1;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #48bb78 0%, #38a169 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(72, 187, 120, 0.3);
+        }
+
+        .btn-secondary {
+            background: #e2e8f0;
+            color: #4a5568;
+        }
+
+        .btn-secondary:hover {
+            background: #cbd5e0;
+            transform: translateY(-1px);
+        }
+
+        .registration-status {
+            padding: 10px;
+            border-radius: 6px;
+            font-size: 0.9em;
+            text-align: center;
+        }
+
+        .registration-status.success {
+            background: #c6f6d5;
+            color: #22543d;
+            border: 1px solid #9ae6b4;
+        }
+
+        .registration-status.error {
+            background: #fed7d7;
+            color: #742a2a;
+            border: 1px solid #fc8181;
+        }
+
+        /* Pulse animation for unregistered tags */
+        .needs-registration {
             animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% {
+                box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
+            }
+            70% {
+                box-shadow: 0 0 0 10px rgba(239, 68, 68, 0);
+            }
+            100% {
+                box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+            }
         }
     </style>
 </head>
 <body>
     <div class="container">
+        <!-- Header -->
         <div class="header">
-            <h1>🔖 RFID Scanner Dashboard</h1>
-            <p class="subtitle">Real-time RFID tag monitoring system</p>
-            <div class="controls">
-                <div style="margin-top: 10px; color: #4299e1; font-weight: bold;">
-                    🚀 Auto-Start Enabled - Scanning begins automatically
+            <h1>🏷️ RFID Scanner Dashboard</h1>
+            <p>Real-time tag monitoring and detection system</p>
+            
+            <div class="header-controls">
+                <div class="header-left">
+                    <a href="/" class="back-button">
+                        ← Back to Main Dashboard
+                    </a>
+                </div>
+                <div class="header-right">
+                    <button class="refresh-button" onclick="refreshData()">🔄 Refresh</button>
                 </div>
             </div>
-            <div class="connection-status">
-                <span class="status-indicator" id="statusIndicator"></span>
-                <span id="connectionStatus">Connected</span>
+            
+            <div class="status-bar">
+                <div class="status-item">
+                    <div class="status-indicator" id="connectionIndicator"></div>
+                    <span id="connectionStatus">Connecting...</span>
+                </div>
+                <div class="status-item">
+                    <span>📡 Scanning: </span>
+                    <span id="scanningStatus">Initializing...</span>
+                </div>
+                <div class="status-item">
+                    <span>⏱️ Uptime: </span>
+                    <span id="uptime">00:00:00</span>
+                </div>
             </div>
         </div>
 
-        <div class="stats-grid">
-            <div class="stat-card">
-                <div class="stat-number" id="activeTags">0</div>
-                <div class="stat-label">Active Tags</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-number" id="totalScans">0</div>
-                <div class="stat-label">Total Scans</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-number" id="totalDetections">0</div>
-                <div class="stat-label">Detections</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-number" id="scanRate">0.0</div>
-                <div class="stat-label">Scans/Second</div>
-            </div>
-        </div>
-
+        <!-- Main Content -->
         <div class="main-content">
-            <div class="tags-section">
-                <h2 class="section-title">🏷️ Active RFID Tags</h2>
-                <div id="tagsList">
-                    <div class="empty-state">
-                        🚀 Auto-scanning started... Waiting for RFID tags to be detected.
+            <!-- Statistics Panel -->
+            <div class="panel">
+                <h2>📊 Statistics</h2>
+                
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-value" id="totalScans">0</div>
+                        <div class="stat-label">Total Scans</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="activeTags">0</div>
+                        <div class="stat-label">Active Tags</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="totalDetections">0</div>
+                        <div class="stat-label">Total Detections</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="scanRate">0.0</div>
+                        <div class="stat-label">Scans/sec</div>
                     </div>
                 </div>
             </div>
 
-            <div class="activity-section">
-                <h2 class="section-title">📊 Recent Activity</h2>
-                <div id="activityList">
+            <!-- Active Tags Panel -->
+            <div class="panel">
+                <h2>🏷️ Active Tags (<span id="tagCount">0</span>)</h2>
+                
+                <div class="tag-list" id="tagList">
                     <div class="empty-state">
-                        No recent activity.
+                        <p>No active tags detected</p>
+                        <p>Place RFID tags near the reader to begin detection</p>
                     </div>
                 </div>
+            </div>
+        </div>
+
+        <!-- Activity Panel -->
+        <div class="panel">
+            <h2>📋 Recent Activity</h2>
+            
+            <div class="activity-list" id="activityList">
+                <div class="empty-state">
+                    <p>No recent activity</p>
+                    <p>Activity will appear here when tags are detected</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+            <p>RFID Scanner Dashboard | Real-time updates via WebSocket | Last updated: <span id="lastUpdate">Never</span></p>
+        </div>
+    </div>
+
+    <!-- Registration Modal -->
+    <div id="registrationModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>🆕 New RFID Tag Detected</h3>
+                <span class="close" onclick="closeRegistrationModal()">&times;</span>
+            </div>
+            
+            <div class="modal-body">
+                <div class="tag-registration-info">
+                    <p><strong>Tag ID:</strong> <span id="modalTagId">-</span></p>
+                    <p><strong>Detection Time:</strong> <span id="modalDetectionTime">-</span></p>
+                    <p class="registration-note">⚠️ This tag is not registered in the database. Please provide an item name to register it.</p>
+                </div>
+                
+                <div class="input-group">
+                    <label for="itemNameInput">Item Name:</label>
+                    <input type="text" id="itemNameInput" placeholder="Enter item name (e.g., Laptop Charger)" maxlength="255" />
+                </div>
+                
+                <div class="modal-buttons">
+                    <button class="btn btn-primary" onclick="registerCurrentTag()">✅ Register Tag</button>
+                    <button class="btn btn-secondary" onclick="skipCurrentTag()">⏭️ Skip</button>
+                </div>
+                
+                <div id="registrationStatus" class="registration-status"></div>
             </div>
         </div>
     </div>
 
     <script>
-        // Socket.IO connection
+        // WebSocket connection
         const socket = io();
-        let isScanning = false;
+        let startTime = Date.now();
 
-        // DOM elements
-        const statusIndicator = document.getElementById('statusIndicator');
-        const connectionStatus = document.getElementById('connectionStatus');
-        const activeTags = document.getElementById('activeTags');
-        const totalScans = document.getElementById('totalScans');
-        const totalDetections = document.getElementById('totalDetections');
-        const scanRate = document.getElementById('scanRate');
-        const tagsList = document.getElementById('tagsList');
-        const activityList = document.getElementById('activityList');
-
-        // Socket event handlers
-        socket.on('connect', () => {
-            console.log('Connected to server');
-            // Auto-start scanning animation when connected
-            document.body.classList.add('scanning');
-        });
-
-        socket.on('initial_data', (data) => {
-            updateFromSharedData(data);
-        });
-
-        socket.on('scan_status', (data) => {
-            // Scanning status is now handled by shared data
-            if (data.status === 'auto_started' || data.status === 'started') {
-                isScanning = true;
-                document.body.classList.add('scanning');
-                console.log('Scanning started automatically');
-            } else if (data.status === 'stopped') {
-                isScanning = false;
-                document.body.classList.remove('scanning');
-            }
-        });
-
-        socket.on('status_update', (data) => {
-            updateFromSharedData(data);
-        });
-
-        function updateFromSharedData(data) {
-            // Update statistics - use the statistics object from shared data
-            const stats = data.statistics || data;
-            activeTags.textContent = stats.active_tag_count || 0;
-            totalScans.textContent = (stats.total_scans || 0).toLocaleString();
-            totalDetections.textContent = (stats.total_detections || 0).toLocaleString();
-            scanRate.textContent = (stats.scan_rate || 0).toFixed(1);
-
-            // Update connection status
-            const connStatus = stats.connection_status || 'Disconnected';
-            connectionStatus.textContent = connStatus;
-            statusIndicator.className = 'status-indicator';
+        // Update functions
+        function updateConnectionStatus(connected, status) {
+            const indicator = document.getElementById('connectionIndicator');
+            const statusText = document.getElementById('connectionStatus');
             
-            if (connStatus === 'Connected') {
-                statusIndicator.classList.add('status-connected');
-            } else if (connStatus === 'Disconnected' || connStatus === 'Stopped') {
-                statusIndicator.classList.add('status-disconnected');
+            if (connected) {
+                indicator.className = 'status-indicator status-connected';
+                statusText.textContent = 'Connected';
             } else {
-                statusIndicator.classList.add('status-error');
-            }
-
-            // Update active tags
-            if (data.active_tags) {
-                updateTags(data.active_tags);
-            }
-
-            // Update recent activity
-            if (data.recent_activity) {
-                updateActivity(data.recent_activity);
+                indicator.className = 'status-indicator status-disconnected';
+                statusText.textContent = status || 'Disconnected';
             }
         }
 
-        // Update functions (kept for compatibility)
         function updateStatistics(stats) {
-            updateFromSharedData(stats);
+            document.getElementById('totalScans').textContent = stats.total_scans || 0;
+            document.getElementById('activeTags').textContent = stats.active_tag_count || 0;
+            document.getElementById('totalDetections').textContent = stats.total_detections || 0;
+            document.getElementById('scanRate').textContent = (stats.scan_rate || 0).toFixed(1);
+            document.getElementById('tagCount').textContent = stats.active_tag_count || 0;
+            
+            // Update scanning status
+            document.getElementById('scanningStatus').textContent = stats.scanning ? 'Active' : 'Inactive';
         }
 
         function updateTags(tags) {
-            const tagIds = Object.keys(tags);
+            const tagList = document.getElementById('tagList');
             
-            if (tagIds.length === 0) {
-                tagsList.innerHTML = '<div class="empty-state">No active tags detected.</div>';
+            if (!tags || Object.keys(tags).length === 0) {
+                tagList.innerHTML = `
+                    <div class="empty-state">
+                        <p>No active tags detected</p>
+                        <p>Place RFID tags near the reader to begin detection</p>
+                    </div>
+                `;
                 return;
             }
 
             let html = '';
-            tagIds.forEach(tagId => {
-                const tag = tags[tagId];
-                const signalClass = `signal-${tag.signal_strength.toLowerCase()}`;
+            for (const [tagId, tagInfo] of Object.entries(tags)) {
+                const signalClass = `signal-${(tagInfo.signal_strength || 'new').toLowerCase()}`;
+                const displayId = tagId.length > 30 ? tagId.substring(0, 30) + '...' : tagId;
                 
                 html += `
-                    <div class="tag-item" data-tag-id="${tag.full_id}">
-                        <div class="tag-id">${tag.id}</div>
-                        <div class="tag-details">
-                            <div>First Seen: ${tag.first_seen}</div>
-                            <div>Last Seen: ${tag.last_seen}</div>
-                            <div>Detections: ${tag.count}</div>
-                            <div class="${signalClass}">Signal: ${tag.signal_strength}</div>
+                    <div class="tag-item">
+                        <div class="tag-info">
+                            <div class="tag-id">${displayId}</div>
+                            <div class="tag-details">
+                                Detections: ${tagInfo.count || 1} | 
+                                Last seen: ${tagInfo.last_seen_relative || 'Just now'}
+                            </div>
+                        </div>
+                        <div class="signal-strength ${signalClass}">
+                            ${tagInfo.signal_strength || 'New'}
                         </div>
                     </div>
                 `;
-            });
-            
-            tagsList.innerHTML = html;
-        }
-
-        function removeTag(tagId) {
-            const tagElement = document.querySelector(`[data-tag-id="${tagId}"]`);
-            if (tagElement) {
-                tagElement.style.transition = 'opacity 0.5s ease';
-                tagElement.style.opacity = '0';
-                setTimeout(() => {
-                    tagElement.remove();
-                    
-                    // Check if no tags remain
-                    if (tagsList.children.length === 0) {
-                        tagsList.innerHTML = '<div class="empty-state">No active tags detected.</div>';
-                    }
-                }, 500);
             }
+            tagList.innerHTML = html;
         }
 
         function updateActivity(activities) {
-            if (activities.length === 0) {
-                activityList.innerHTML = '<div class="empty-state">No recent activity.</div>';
+            const activityList = document.getElementById('activityList');
+            
+            if (!activities || activities.length === 0) {
+                activityList.innerHTML = `
+                    <div class="empty-state">
+                        <p>No recent activity</p>
+                        <p>Activity will appear here when tags are detected</p>
+                    </div>
+                `;
                 return;
             }
 
             let html = '';
-            activities.forEach(activity => {
+            activities.slice(0, 20).forEach(activity => {
                 html += `
                     <div class="activity-item">
                         <div class="activity-time">${activity.time}</div>
@@ -440,34 +690,234 @@
                     </div>
                 `;
             });
-            
             activityList.innerHTML = html;
         }
 
-        function addActivity(activity) {
-            const activityElement = document.createElement('div');
-            activityElement.className = 'activity-item';
-            activityElement.innerHTML = `
-                <div class="activity-time">${activity.time}</div>
-                <div class="activity-message">${activity.message}</div>
-            `;
+        function updateUptime() {
+            const now = Date.now();
+            const diff = now - startTime;
+            const hours = Math.floor(diff / 3600000);
+            const minutes = Math.floor((diff % 3600000) / 60000);
+            const seconds = Math.floor((diff % 60000) / 1000);
             
-            // Remove empty state if present
-            const emptyState = activityList.querySelector('.empty-state');
-            if (emptyState) {
-                emptyState.remove();
+            document.getElementById('uptime').textContent = 
+                `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+        }
+
+        function refreshData() {
+            socket.emit('get_status');
+        }
+
+        // Socket event handlers
+        socket.on('connect', function() {
+            console.log('Connected to RFID system');
+            updateConnectionStatus(true, 'Connected');
+            refreshData();
+        });
+
+        socket.on('disconnect', function() {
+            console.log('Disconnected from RFID system');
+            updateConnectionStatus(false, 'Disconnected');
+        });
+
+        socket.on('initial_data', function(data) {
+            console.log('Received initial data:', data);
+            updateData(data);
+        });
+
+        socket.on('status_update', function(data) {
+            console.log('Status update:', data);
+            updateData(data);
+        });
+
+        // Start uptime counter
+        setInterval(updateUptime, 1000);
+        updateUptime();
+
+        // Auto-refresh every 30 seconds
+        setInterval(refreshData, 30000);
+
+        // Registration Modal Functions
+        let currentRegistrationTag = null;
+
+        function showRegistrationModal(tagData) {
+            currentRegistrationTag = tagData;
+            
+            // Update modal content
+            document.getElementById('modalTagId').textContent = tagData.tag_hex;
+            document.getElementById('modalDetectionTime').textContent = new Date(tagData.first_detected).toLocaleString();
+            document.getElementById('itemNameInput').value = '';
+            document.getElementById('registrationStatus').textContent = '';
+            document.getElementById('registrationStatus').className = 'registration-status';
+            
+            // Show modal
+            document.getElementById('registrationModal').style.display = 'flex';
+            
+            // Focus on input
+            setTimeout(() => {
+                document.getElementById('itemNameInput').focus();
+            }, 300);
+        }
+
+        function closeRegistrationModal() {
+            document.getElementById('registrationModal').style.display = 'none';
+            currentRegistrationTag = null;
+            
+            // Check for next pending registration
+            setTimeout(checkPendingRegistrations, 500);
+        }
+
+        async function registerCurrentTag() {
+            if (!currentRegistrationTag) return;
+            
+            const itemName = document.getElementById('itemNameInput').value.trim();
+            if (!itemName) {
+                showRegistrationStatus('Please enter an item name', 'error');
+                return;
             }
-            
-            // Add to top of list
-            activityList.insertBefore(activityElement, activityList.firstChild);
-            
-            // Keep only last 20 items
-            while (activityList.children.length > 20) {
-                activityList.removeChild(activityList.lastChild);
+
+            try {
+                showRegistrationStatus('Registering tag...', '');
+                
+                const response = await fetch('/api/register-tag', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        tag_id: currentRegistrationTag.tag_hex,
+                        item_name: itemName
+                    })
+                });
+
+                const result = await response.json();
+                
+                if (result.success) {
+                    showRegistrationStatus('✅ Tag registered successfully!', 'success');
+                    setTimeout(() => {
+                        closeRegistrationModal();
+                    }, 1500);
+                } else {
+                    showRegistrationStatus('❌ ' + (result.error || 'Registration failed'), 'error');
+                }
+            } catch (error) {
+                console.error('Registration error:', error);
+                showRegistrationStatus('❌ Network error', 'error');
             }
         }
 
-        // Auto-start system - no manual controls needed
+        async function skipCurrentTag() {
+            if (!currentRegistrationTag) return;
+
+            try {
+                const response = await fetch('/api/skip-registration', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        tag_id: currentRegistrationTag.tag_hex
+                    })
+                });
+
+                const result = await response.json();
+                
+                if (result.success) {
+                    showRegistrationStatus('⏭️ Tag registration skipped', 'success');
+                    setTimeout(() => {
+                        closeRegistrationModal();
+                    }, 1000);
+                } else {
+                    showRegistrationStatus('❌ ' + (result.error || 'Skip failed'), 'error');
+                }
+            } catch (error) {
+                console.error('Skip error:', error);
+                showRegistrationStatus('❌ Network error', 'error');
+            }
+        }
+
+        function showRegistrationStatus(message, type) {
+            const statusElement = document.getElementById('registrationStatus');
+            statusElement.textContent = message;
+            statusElement.className = 'registration-status' + (type ? ' ' + type : '');
+        }
+
+        async function checkPendingRegistrations() {
+            try {
+                const response = await fetch('/api/pending-registrations');
+                const result = await response.json();
+                
+                if (result.success && result.data.queue.length > 0) {
+                    // Show modal for first pending tag
+                    const firstTagId = result.data.queue[0];
+                    const tagData = result.data.pending_tags[firstTagId];
+                    
+                    if (tagData && tagData.awaiting_input) {
+                        showRegistrationModal(tagData);
+                    }
+                }
+            } catch (error) {
+                console.error('Error checking pending registrations:', error);
+            }
+        }
+
+        // Enhanced update function to handle registration
+        function updateData(data) {
+            if (data.statistics) {
+                updateStatistics(data.statistics);
+            }
+            
+            if (data.active_tags) {
+                updateTags(data.active_tags);
+            }
+            
+            if (data.recent_activity) {
+                updateActivity(data.recent_activity);
+            }
+            
+            // Update connection status from data
+            if (data.statistics && data.statistics.connection_status) {
+                updateConnectionStatus(
+                    data.statistics.connection_status.toLowerCase().includes('connected'),
+                    data.statistics.connection_status
+                );
+            }
+            
+            // Check for new pending registrations
+            if (data.pending_registrations && Object.keys(data.pending_registrations).length > 0) {
+                // Only show modal if no modal is currently open
+                const modal = document.getElementById('registrationModal');
+                if (modal.style.display === 'none' && data.registration_queue.length > 0) {
+                    const firstTagId = data.registration_queue[0];
+                    const tagData = data.pending_registrations[firstTagId];
+                    
+                    if (tagData && tagData.awaiting_input) {
+                        setTimeout(() => showRegistrationModal(tagData), 500);
+                    }
+                }
+            }
+            
+            // Update last update time
+            document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
+        }
+
+        // Enter key support for item name input
+        document.addEventListener('DOMContentLoaded', function() {
+            document.getElementById('itemNameInput').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    registerCurrentTag();
+                }
+            });
+        });
+
+        // Initial page load
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('RFID Dashboard loaded');
+            setTimeout(refreshData, 1000);
+            
+            // Check for pending registrations on load
+            setTimeout(checkPendingRegistrations, 2000);
+        });
     </script>
 </body>
 </html>

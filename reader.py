@@ -153,6 +153,7 @@ class Reader:
                 continue
 
     def read_memory(self, epc: bytes, memory_bank: int, start_address: int, length: int, access_password: bytes = bytes(4)) -> Response:
+        """Read data from tag memory"""
         request_data = bytearray()
         request_data.extend(bytearray([int(len(epc) / 2)]))  # EPC Length in word
         request_data.extend(epc)
@@ -162,17 +163,7 @@ class Reader:
         self.__send_request(command)
         return Response(self.__get_response())
 
-    def write_memory(self, epc: bytes, memory_bank: int, start_address: int, data_to_write: bytes, access_password: bytes = bytes(4)) -> Response:
-        request_data = bytearray()
-        request_data.extend(bytearray([int(len(data_to_write) / 2)]))  # Data length in word
-        request_data.extend(bytearray([int(len(epc) / 2)]))  # EPC Length in word
-        request_data.extend(epc)
-        request_data.extend(bytearray([memory_bank, start_address]))
-        request_data.extend(data_to_write)
-        request_data.extend(access_password)
-        command = Command(0x04, data=request_data)  # CMD_WRITE_MEMORY
-        self.__send_request(command)
-        return Response(self.__get_response())
+
 
     def lock(self, epc: bytes, select: int, set_protect: int, access_password: bytes) -> Response:
         parameter = bytearray([int(len(epc) / 2)]) + epc + bytearray([select, set_protect]) + access_password
