@@ -467,18 +467,88 @@
             color: #c53030;
             margin-bottom: 10px;
         }
+
+        /* Auto-unregistration notification styles */
+        .auto-unregister-notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: linear-gradient(135deg, #48bb78 0%, #38a169 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 8px 25px rgba(72, 187, 120, 0.3);
+            z-index: 2000;
+            max-width: 400px;
+            transform: translateX(500px);
+            opacity: 0;
+            transition: all 0.5s ease;
+        }
+
+        .auto-unregister-notification.show {
+            transform: translateX(0);
+            opacity: 1;
+        }
+
+        .notification-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .notification-title {
+            font-weight: bold;
+            font-size: 1.1em;
+        }
+
+        .notification-close {
+            cursor: pointer;
+            font-size: 1.5em;
+            opacity: 0.8;
+            transition: opacity 0.2s;
+        }
+
+        .notification-close:hover {
+            opacity: 1;
+        }
+
+        .notification-content {
+            font-size: 0.9em;
+            line-height: 1.4;
+        }
+
+        .notification-tag-info {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 10px;
+            border-radius: 5px;
+            margin-top: 10px;
+            font-family: 'Courier New', monospace;
+        }
+
+        /* Auto-unregistered tag styling */
+        .auto-unregistered {
+            background: rgba(72, 187, 120, 0.05) !important;
+            border-left: 4px solid #48bb78;
+        }
+
+        .auto-unregistered .tag-id {
+            color: #38a169;
+            font-weight: bold;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <!-- Header -->
         <div class="header">
-            <h1>� RFID Tag Unregister Dashboard</h1>
-            <p>Unregister RFID tags from the system while preserving historical data</p>
+            <h1>🤖 RFID Auto-Unregistration Dashboard</h1>
+            <p>Automatic RFID tag unregistration with real-time notifications</p>
             
             <div class="warning-note">
-                <h3>⚠️ Important Notice</h3>
-                <p>This page allows you to <strong>unregister</strong> RFID tags from the system. Unregistered tags maintain their historical data and can be re-registered later. Only active registered tags can be unregistered.</p>
+                <h3>🤖 Automatic Unregistration</h3>
+                <p>This system now <strong>automatically unregisters</strong> RFID tags when they are detected. When an active registered tag is placed near the reader, it will be immediately unregistered without user interaction. Historical data is preserved and tags can be re-registered later.</p>
+                <p><strong>🔔 Notifications:</strong> You will see a green notification when a tag is automatically unregistered.</p>
             </div>
             
             <div class="header-controls">
@@ -536,7 +606,7 @@
 
             <!-- Active Tags Panel -->
             <div class="panel">
-                <h2>🏷️ Active Registered Tags - Can Unregister (<span id="tagCount">0</span>)</h2>
+                <h2>🤖 Auto-Unregistered Tags (<span id="tagCount">0</span>)</h2>
                 
                 <div class="tag-list" id="tagList">
                     <div class="empty-state">
@@ -549,7 +619,7 @@
 
         <!-- Activity Panel -->
         <div class="panel">
-            <h2>📋 Recent Unregister Activity</h2>
+            <h2>📋 Recent Auto-Unregistration Activity</h2>
             
             <div class="activity-list" id="activityList">
                 <div class="empty-state">
@@ -561,7 +631,19 @@
 
         <!-- Footer -->
         <div class="footer">
-            <p>RFID Tag Unregister Dashboard | Real-time updates via WebSocket | Last updated: <span id="lastUpdate">Never</span></p>
+            <p>RFID Auto-Unregistration Dashboard | Real-time automatic processing | Last updated: <span id="lastUpdate">Never</span></p>
+        </div>
+    </div>
+
+    <!-- Auto-unregistration Notification -->
+    <div id="autoUnregisterNotification" class="auto-unregister-notification">
+        <div class="notification-header">
+            <div class="notification-title">🤖 Auto-Unregistration</div>
+            <div class="notification-close" onclick="hideAutoUnregisterNotification()">&times;</div>
+        </div>
+        <div class="notification-content">
+            <div id="notificationMessage">RFID tag automatically unregistered</div>
+            <div id="notificationTagInfo" class="notification-tag-info"></div>
         </div>
     </div>
 
@@ -640,10 +722,58 @@
             }
         }
         
+        // Auto-unregistration notification functions
+        let notificationTimeout = null;
+        
+        function showAutoUnregisterNotification(tagInfo, message) {
+            const notification = document.getElementById('autoUnregisterNotification');
+            const messageDiv = document.getElementById('notificationMessage');
+            const tagInfoDiv = document.getElementById('notificationTagInfo');
+            
+            messageDiv.textContent = message || 'RFID tag automatically unregistered';
+            
+            let tagDetails = '';
+            if (tagInfo) {
+                const tagId = tagInfo.tag_id || tagInfo.id || 'Unknown';
+                const rfId = tagInfo.rf_id || 'N/A';
+                const name = tagInfo.name || 'N/A';
+                const palette = tagInfo.palette_number || 'N/A';
+                
+                tagDetails = `Tag ID: ${tagId.substring(0, 20)}...\nRFID: ${rfId}\nName: ${name}\nPalette: ${palette}`;
+            }
+            tagInfoDiv.textContent = tagDetails;
+            
+            // Show notification
+            notification.classList.add('show');
+            
+            // Clear existing timeout
+            if (notificationTimeout) {
+                clearTimeout(notificationTimeout);
+            }
+            
+            // Auto-hide after 8 seconds
+            notificationTimeout = setTimeout(() => {
+                hideAutoUnregisterNotification();
+            }, 8000);
+        }
+        
+        function hideAutoUnregisterNotification() {
+            const notification = document.getElementById('autoUnregisterNotification');
+            notification.classList.remove('show');
+            
+            if (notificationTimeout) {
+                clearTimeout(notificationTimeout);
+                notificationTimeout = null;
+            }
+        }
+
         function updateDashboard(data) {
             console.log('Updating dashboard with:', data);
             
             const stats = data.statistics || {};
+            
+            // Check for auto-unregistration activities
+            checkForAutoUnregistrations(data.recent_activity || []);
             
             // Update statistics
             document.getElementById('totalScans').textContent = stats.total_scans || 0;
@@ -681,8 +811,52 @@
             // Update last update time
             document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
             
-            // Check for registered tags that can be unregistered
-            checkForUnregisterableTags(data.active_tags || {});
+            // Auto-unregistration is handled automatically - no user interaction needed
+        }
+        
+        function checkForAutoUnregistrations(activities) {
+            // Look for recent auto-unregistration activities
+            const recentAutoUnregistrations = activities.filter(activity => 
+                activity.type === 'tag_auto_unregistered' && 
+                isRecentActivity(activity.time)
+            );
+            
+            // Show notification for the most recent auto-unregistration
+            if (recentAutoUnregistrations.length > 0) {
+                const latestUnregistration = recentAutoUnregistrations[0];
+                
+                // Extract tag info from the activity message
+                const message = latestUnregistration.message;
+                const tagId = latestUnregistration.tag_id;
+                
+                // Parse RFID and Name from the message
+                const rfidMatch = message.match(/RFID:\s*([^,]+)/);
+                const nameMatch = message.match(/Name:\s*([^,\]]+)/);
+                
+                const tagInfo = {
+                    tag_id: tagId,
+                    rf_id: rfidMatch ? rfidMatch[1].trim() : 'N/A',
+                    name: nameMatch ? nameMatch[1].trim() : 'N/A',
+                    palette_number: 'N/A'
+                };
+                
+                showAutoUnregisterNotification(tagInfo, 'RFID tag detected and automatically unregistered');
+            }
+        }
+        
+        function isRecentActivity(timeString) {
+            // Check if activity happened in the last 5 seconds
+            try {
+                const now = new Date();
+                const activityTime = new Date();
+                const timeParts = timeString.split(':');
+                activityTime.setHours(parseInt(timeParts[0]), parseInt(timeParts[1]), parseInt(timeParts[2]));
+                
+                const diffInSeconds = (now - activityTime) / 1000;
+                return Math.abs(diffInSeconds) < 5; // Within 5 seconds
+            } catch (e) {
+                return false;
+            }
         }
         
         function calculateRegisteredTags(activeTags) {
@@ -700,38 +874,41 @@
             const tagList = document.getElementById('tagList');
             const tagCount = document.getElementById('tagCount');
             
-            // Filter only active registered tags that can be unregistered
-            const unregisterableTags = {};
+            // Filter only unregistered tags (auto-unregistered or never registered)
+            const unregisteredTags = {};
             for (const tagId in activeTags) {
                 const tagInfo = activeTags[tagId];
-                if (tagInfo.is_registered && tagInfo.status === 'active') {
-                    unregisterableTags[tagId] = tagInfo;
+                // Show tags that are not registered or have status 'non_active' (auto-unregistered)
+                if (!tagInfo.is_registered || tagInfo.status === 'non_active') {
+                    unregisteredTags[tagId] = tagInfo;
                 }
             }
             
-            const unregisterableCount = Object.keys(unregisterableTags).length;
-            tagCount.textContent = unregisterableCount;
+            const unregisteredCount = Object.keys(unregisteredTags).length;
+            tagCount.textContent = unregisteredCount;
             
-            if (unregisterableCount === 0) {
+            if (unregisteredCount === 0) {
                 tagList.innerHTML = `
                     <div class="empty-state">
-                        <p>No active registered tags detected</p>
-                        <p>Place registered RFID tags near the reader to unregister them</p>
+                        <p>No unregistered tags detected</p>
+                        <p>Tags will appear here after automatic unregistration</p>
                     </div>
                 `;
                 return;
             }
             
             let html = '';
-            for (const [tagId, tagInfo] of Object.entries(unregisterableTags)) {
+            for (const [tagId, tagInfo] of Object.entries(unregisteredTags)) {
                 const displayId = tagInfo.id || tagId;
                 const signalClass = `signal-${(tagInfo.signal_strength || 'new').toLowerCase()}`;
+                const isAutoUnregistered = tagInfo.status === 'non_active';
                 
                 html += `
-                    <div class="tag-item can-delete" data-tag-id="${tagId}" onclick="promptUnregisterTag('${tagId}')">
+                    <div class="tag-item ${isAutoUnregistered ? 'auto-unregistered' : ''}" data-tag-id="${tagId}">
                         <div class="tag-info">
                             <div class="tag-id">${displayId}</div>
                             <div class="tag-details">
+                                ${isAutoUnregistered ? '🤖 AUTO-UNREGISTERED | ' : ''}
                                 RF ID: ${tagInfo.rf_id || 'N/A'} | 
                                 Name: ${tagInfo.name || 'N/A'} | 
                                 Palette: ${tagInfo.palette_number || 'N/A'} |
@@ -740,7 +917,7 @@
                             </div>
                         </div>
                         <div class="signal-strength ${signalClass}">
-                            ${tagInfo.signal_strength || 'New'}
+                            ${isAutoUnregistered ? 'Unregistered' : tagInfo.signal_strength || 'New'}
                         </div>
                     </div>
                 `;
@@ -755,8 +932,8 @@
             if (!activities || activities.length === 0) {
                 activityList.innerHTML = `
                     <div class="empty-state">
-                        <p>No recent deletion activity</p>
-                        <p>Activity will appear here when tags are deleted</p>
+                        <p>No recent auto-unregistration activity</p>
+                        <p>Activity will appear here when tags are automatically unregistered</p>
                     </div>
                 `;
                 return;
@@ -775,16 +952,7 @@
             activityList.innerHTML = html;
         }
         
-        function checkForUnregisterableTags(activeTags) {
-            // Check for registered tags that can be unregistered
-            for (const tagId in activeTags) {
-                const tagInfo = activeTags[tagId];
-                if (tagInfo.is_registered && tagInfo.status === 'active' && !currentTag) {
-                    // This is an active registered tag that can be unregistered
-                    // We'll let the user click on it to unregister
-                }
-            }
-        }
+        // Auto-unregistration happens automatically - no user interaction needed
         
         function promptUnregisterTag(tagId) {
             // Find tag info from active tags data

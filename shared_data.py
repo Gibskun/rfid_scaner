@@ -59,13 +59,14 @@ def update_scanning_status(scanning: bool):
             shared_rfid_data.start_time = time.time()
 
 def add_tag_detection(tag_hex: str, tag_data: bytes, db_connection=None):
-    """Add new tag detection safely"""
+    """Add new tag detection safely - with automatic unregistration for active tags"""
     current_time = datetime.now()
     
     with _shared_data_lock:
         # Initialize variables
         is_in_database = False
         item_name = None
+        auto_unregistered = False
         
         # Update internal active tags
         if tag_hex in shared_rfid_data.active_tags:
@@ -84,8 +85,32 @@ def add_tag_detection(tag_hex: str, tag_data: bytes, db_connection=None):
                         # Tag exists in database - check its status
                         tag_status = tag_info_db.get('status', 'unknown')
                         if tag_status == 'active':
-                            is_in_database = True
-                            item_name = tag_info_db.get('name') or tag_info_db.get('rf_id')
+                            # AUTOMATIC UNREGISTRATION: Detected active tag - auto-unregister it
+                            print(f"🔄 AUTO-UNREGISTERING detected active tag: {tag_hex[:20]}...")
+                            print(f"   📋 Tag Info: RFID={tag_info_db.get('rf_id', 'N/A')}, Name={tag_info_db.get('name', 'N/A')}, Palette={tag_info_db.get('palette_number', 'N/A')}")
+                            
+                            # Perform automatic unregistration
+                            unregister_success = db_connection.unregister_tag(tag_hex)
+                            if unregister_success:
+                                auto_unregistered = True
+                                is_in_database = False  # Now it's unregistered
+                                item_name = f"[AUTO-UNREGISTERED] {tag_info_db.get('rf_id', 'Unknown')}"
+                                print(f"✅ AUTOMATIC UNREGISTRATION SUCCESSFUL: {tag_hex[:20]}...")
+                                
+                                # Add immediate activity for auto-unregistration
+                                tag_display_id = tag_hex[:20] + "..." if len(tag_hex) > 20 else tag_hex
+                                activity = {
+                                    'time': current_time.strftime('%H:%M:%S'),
+                                    'type': 'tag_auto_unregistered',
+                                    'message': f'🤖 AUTO-UNREGISTERED: {tag_display_id} → RFID: {tag_info_db.get("rf_id", "N/A")}, Name: {tag_info_db.get("name", "N/A")}',
+                                    'tag_id': tag_hex
+                                }
+                                shared_rfid_data.recent_activity.insert(0, activity)
+                            else:
+                                print(f"❌ AUTOMATIC UNREGISTRATION FAILED: {tag_hex[:20]}...")
+                                # Keep as registered if unregistration failed
+                                is_in_database = True
+                                item_name = tag_info_db.get('name') or tag_info_db.get('rf_id')
                         elif tag_status == 'non_active':
                             # Tag is unregistered but exists in database
                             is_in_database = False  # Treat as unregistered for display
@@ -117,44 +142,45 @@ def add_tag_detection(tag_hex: str, tag_data: bytes, db_connection=None):
                 if tag_hex not in shared_rfid_data.registration_queue:
                     shared_rfid_data.registration_queue.append(tag_hex)
             
-            # Add to recent activity
-            tag_display_id = tag_hex[:20] + "..." if len(tag_hex) > 20 else tag_hex
-            
-            if is_in_database:
-                # Build detailed message for registered tags
-                message_parts = [f'Registered tag: {tag_display_id}']
-                if db_connection:
-                    try:
-                        tag_info_db = db_connection.get_tag_info(tag_hex)
-                        if tag_info_db:
-                            details = []
-                            if tag_info_db.get('rf_id'):
-                                details.append(f"RFID: {tag_info_db['rf_id']}")
-                            if tag_info_db.get('palette_number'):
-                                details.append(f"Palette: #{tag_info_db['palette_number']}")
-                            if tag_info_db.get('name'):
-                                details.append(f"Name: {tag_info_db['name']}")
-                            if details:
-                                message_parts.append(f"({', '.join(details)})")
-                    except Exception as e:
-                        print(f"⚠️ Error building activity message: {e}")
+            # Add to recent activity (only if not already auto-unregistered)
+            if not auto_unregistered:
+                tag_display_id = tag_hex[:20] + "..." if len(tag_hex) > 20 else tag_hex
                 
-                message = ' '.join(message_parts)
-            else:
-                message = f'New tag detected: {tag_display_id} - NEEDS REGISTRATION'
-            
-            activity = {
-                'time': current_time.strftime('%H:%M:%S'),
-                'type': 'new_tag' if not is_in_database else 'registered_tag',
-                'message': message,
-                'tag_id': tag_hex,
-                'needs_registration': not is_in_database
-            }
-            shared_rfid_data.recent_activity.insert(0, activity)
-            
-            # Keep only last 50 activities
-            if len(shared_rfid_data.recent_activity) > 50:
-                shared_rfid_data.recent_activity = shared_rfid_data.recent_activity[:50]
+                if is_in_database:
+                    # Build detailed message for registered tags
+                    message_parts = [f'Registered tag: {tag_display_id}']
+                    if db_connection:
+                        try:
+                            tag_info_db = db_connection.get_tag_info(tag_hex)
+                            if tag_info_db:
+                                details = []
+                                if tag_info_db.get('rf_id'):
+                                    details.append(f"RFID: {tag_info_db['rf_id']}")
+                                if tag_info_db.get('palette_number'):
+                                    details.append(f"Palette: #{tag_info_db['palette_number']}")
+                                if tag_info_db.get('name'):
+                                    details.append(f"Name: {tag_info_db['name']}")
+                                if details:
+                                    message_parts.append(f"({', '.join(details)})")
+                        except Exception as e:
+                            print(f"⚠️ Error building activity message: {e}")
+                    
+                    message = ' '.join(message_parts)
+                else:
+                    message = f'New tag detected: {tag_display_id} - NEEDS REGISTRATION'
+                
+                activity = {
+                    'time': current_time.strftime('%H:%M:%S'),
+                    'type': 'new_tag' if not is_in_database else 'registered_tag',
+                    'message': message,
+                    'tag_id': tag_hex,
+                    'needs_registration': not is_in_database
+                }
+                shared_rfid_data.recent_activity.insert(0, activity)
+                
+                # Keep only last 50 activities
+                if len(shared_rfid_data.recent_activity) > 50:
+                    shared_rfid_data.recent_activity = shared_rfid_data.recent_activity[:50]
         
         # Update web-friendly data
         tag_info = shared_rfid_data.active_tags[tag_hex]
