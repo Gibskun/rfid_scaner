@@ -343,6 +343,41 @@ class RFIDDatabase:
             if conn:
                 self.connection_pool.putconn(conn)
     
+    def delete_tag(self, tag_id: str) -> bool:
+        """Delete a tag from the database"""
+        conn = None
+        try:
+            with self.lock:
+                conn = self.connection_pool.getconn()
+                cursor = conn.cursor()
+                
+                # Check if tag exists first
+                cursor.execute("SELECT id FROM rfid_tags WHERE tag_id = %s", (tag_id,))
+                existing = cursor.fetchone()
+                
+                if existing:
+                    # Delete from tag detection history first (foreign key constraint)
+                    cursor.execute("DELETE FROM tag_detection_history WHERE tag_id = %s", (tag_id,))
+                    
+                    # Delete the main tag record
+                    cursor.execute("DELETE FROM rfid_tags WHERE tag_id = %s", (tag_id,))
+                    
+                    conn.commit()
+                    print(f"✅ Tag deleted successfully: {tag_id[:20]}...")
+                    return True
+                else:
+                    print(f"⚠️  Tag not found in database: {tag_id[:20]}...")
+                    return False
+                    
+        except Exception as e:
+            print(f"❌ Database error in delete_tag: {e}")
+            if conn:
+                conn.rollback()
+            return False
+        finally:
+            if conn:
+                self.connection_pool.putconn(conn)
+
     def close(self):
         """Close all database connections"""
         if self.connection_pool:

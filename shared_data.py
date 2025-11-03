@@ -140,7 +140,9 @@ def add_tag_detection(tag_hex: str, tag_data: bytes, db_connection=None):
             'last_seen': current_time.strftime('%H:%M:%S.%f')[:-3],
             'count': tag_info['count'],
             'signal_strength': signal_strength,
-            'duration': (current_time - tag_info['first_seen']).total_seconds()
+            'duration': (current_time - tag_info['first_seen']).total_seconds(),
+            'item_name': tag_info.get('item_name', None),
+            'is_registered': tag_info.get('is_registered', False)
         }
         
         shared_rfid_data.total_detections += 1
@@ -329,6 +331,49 @@ def skip_tag_registration(tag_hex: str):
                 'time': current_time.strftime('%H:%M:%S'),
                 'type': 'tag_skipped',
                 'message': f'Tag registration skipped: {tag_display_id}',
+                'tag_id': tag_hex
+            }
+            shared_rfid_data.recent_activity.insert(0, activity)
+            
+            return True
+        return False
+
+def delete_tag_from_shared_data(tag_hex: str, db_connection=None):
+    """Delete a tag from database and remove from shared data"""
+    with _shared_data_lock:
+        # Delete from database
+        success = False
+        if db_connection:
+            try:
+                success = db_connection.delete_tag(tag_hex)
+            except Exception as e:
+                print(f"❌ Error deleting tag from database: {e}")
+                return False
+        
+        if success:
+            # Remove from active tags
+            if tag_hex in shared_rfid_data.active_tags:
+                del shared_rfid_data.active_tags[tag_hex]
+            
+            # Remove from web active tags
+            if tag_hex in shared_rfid_data.web_active_tags:
+                del shared_rfid_data.web_active_tags[tag_hex]
+            
+            # Remove from pending registration if present
+            if tag_hex in shared_rfid_data.pending_registration:
+                del shared_rfid_data.pending_registration[tag_hex]
+            
+            # Remove from registration queue
+            if tag_hex in shared_rfid_data.registration_queue:
+                shared_rfid_data.registration_queue.remove(tag_hex)
+            
+            # Add activity
+            current_time = datetime.now()
+            tag_display_id = tag_hex[:20] + "..." if len(tag_hex) > 20 else tag_hex
+            activity = {
+                'time': current_time.strftime('%H:%M:%S'),
+                'type': 'tag_deleted',
+                'message': f'Tag deleted from database: {tag_display_id}',
                 'tag_id': tag_hex
             }
             shared_rfid_data.recent_activity.insert(0, activity)

@@ -127,6 +127,17 @@
             transform: translateY(-2px);
         }
 
+        .btn-danger {
+            background: linear-gradient(135deg, #f56565, #c53030);
+            color: white;
+            box-shadow: 0 10px 30px rgba(245, 101, 101, 0.4);
+        }
+
+        .btn-danger:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 15px 40px rgba(245, 101, 101, 0.6);
+        }
+
         .system-status {
             display: flex;
             align-items: center;
@@ -267,6 +278,9 @@
         <div class="action-buttons">
             <a href="/register" class="btn btn-primary">
                 🏷️ Enter RFID Registration System
+            </a>
+            <a href="/delete" class="btn btn-danger">
+                🗑️ Delete RFID Tags from Database
             </a>
             <button class="btn btn-secondary" onclick="showAbout()">
                 ℹ️ About System

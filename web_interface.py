@@ -126,6 +126,11 @@ def register_dashboard():
     """RFID registration dashboard"""
     return render_template('dashboard.html')
 
+@app.route('/delete')
+def delete_dashboard():
+    """RFID tag deletion dashboard"""
+    return render_template('delete_dashboard.html')
+
 @app.route('/api/status')
 def api_status():
     """API endpoint for current status"""
@@ -242,6 +247,28 @@ def api_skip_registration():
             return jsonify({'success': True, 'message': 'Tag registration skipped'})
         else:
             return jsonify({'success': False, 'error': 'Failed to skip tag registration'})
+            
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/api/delete-tag', methods=['POST'])
+def api_delete_tag():
+    """Delete a tag from the database"""
+    try:
+        data = request.get_json()
+        tag_id = data.get('tag_id')
+        
+        if not tag_id:
+            return jsonify({'success': False, 'error': 'Tag ID is required'})
+        
+        # Import the delete function from shared_data
+        from shared_data import delete_tag_from_shared_data
+        success = delete_tag_from_shared_data(tag_id, db)
+        
+        if success:
+            return jsonify({'success': True, 'message': f'Tag deleted successfully: {tag_id[:20]}...'})
+        else:
+            return jsonify({'success': False, 'error': 'Failed to delete tag or tag not found'})
             
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
