@@ -30,10 +30,14 @@ def test_database_operations(db):
     # Test 1: Add a test tag
     print("\n1️⃣ Adding test tag...")
     test_tag_id = f"TEST {datetime.now().strftime('%Y%m%d%H%M%S')}"
-    test_data = bytes([0xE2, 0x00, 0x12, 0x34, 0x56, 0x78, 0x90, 0xAB])
     
     try:
-        success = db.add_or_update_tag(test_tag_id, test_data, "Test Item")
+        success = db.add_or_update_tag(
+            tag_id=test_tag_id, 
+            rf_id="RF001", 
+            palette_number=123, 
+            name="Test Item"
+        )
         if success:
             print("✅ Tag added successfully")
         else:
@@ -50,8 +54,11 @@ def test_database_operations(db):
         if tag_info:
             print("✅ Tag retrieved successfully")
             print(f"   Tag ID: {tag_info['tag_id']}")
-            print(f"   Item Name: {tag_info['item_name']}")
-            print(f"   Detection Count: {tag_info['detection_count']}")
+            print(f"   Name: {tag_info['name']}")
+            print(f"   RF ID: {tag_info['rf_id']}")
+            print(f"   Palette Number: {tag_info['palette_number']}")
+            print(f"   Status: {tag_info['status']}")
+            print(f"   Created: {tag_info['created']}")
         else:
             print("❌ Tag not found")
             return False
@@ -59,9 +66,20 @@ def test_database_operations(db):
         print(f"❌ Error retrieving tag: {e}")
         return False
     
-    # Test 3: Write functionality removed
-    print("\n3️⃣ Skipping write tests (functionality removed)")
-    print("✅ Write functionality has been removed from the system")
+    # Test 3: Update tag
+    print("\n3️⃣ Testing tag updates...")
+    try:
+        success = db.add_or_update_tag(
+            tag_id=test_tag_id, 
+            palette_number=456,  # Update palette number
+            name="Updated Test Item"  # Update name
+        )
+        if success:
+            print("✅ Tag updated successfully")
+        else:
+            print("❌ Failed to update tag")
+    except Exception as e:
+        print(f"❌ Error updating tag: {e}")
     
     # Test 4: Search for tags
     print("\n4️⃣ Searching for tags...")
@@ -70,7 +88,7 @@ def test_database_operations(db):
         if results:
             print(f"✅ Found {len(results)} tag(s)")
             for r in results[:3]:  # Show first 3
-                print(f"   - {r['tag_id'][:30]}... ({r['item_name']})")
+                print(f"   - {r['tag_id'][:30]}... ({r['name']})")
         else:
             print("⚠️  No tags found (this might be normal)")
     except Exception as e:
@@ -83,9 +101,11 @@ def test_database_operations(db):
         stats = db.get_statistics()
         print("✅ Statistics retrieved:")
         print(f"   Total Tags: {stats['total_tags']}")
-        print(f"   Written Tags: {stats['written_tags']}")
-        print(f"   Unwritten Tags: {stats['unwritten_tags']}")
-        print(f"   Total Detections: {stats['total_detections']}")
+        print(f"   Active Tags: {stats['active_tags']}")
+        print(f"   Inactive Tags: {stats['inactive_tags']}")
+        print(f"   Deleted Tags: {stats['deleted_tags']}")
+        print(f"   Assigned Tags: {stats['assigned_tags']}")
+        print(f"   Unassigned Tags: {stats['unassigned_tags']}")
     except Exception as e:
         print(f"❌ Error getting statistics: {e}")
         return False
@@ -96,11 +116,46 @@ def test_database_operations(db):
         tags = db.get_all_tags(limit=5)
         print(f"✅ Retrieved {len(tags)} tag(s)")
         for tag in tags:
-            status = "Written" if tag['is_written'] else "Not written"
-            print(f"   - {tag['item_name']}: {status}")
+            print(f"   - {tag['name']}: {tag['status']} (Palette: {tag['palette_number']})")
     except Exception as e:
         print(f"❌ Error getting all tags: {e}")
         return False
+    
+    # Test 7: Soft deletion
+    print("\n7️⃣ Testing soft deletion...")
+    try:
+        success = db.delete_tag(test_tag_id)
+        if success:
+            print("✅ Tag soft deleted successfully")
+            # Verify it doesn't appear in active tags
+            tags = db.get_all_tags()
+            found = any(tag['tag_id'] == test_tag_id for tag in tags)
+            if not found:
+                print("✅ Deleted tag correctly excluded from active tags")
+            else:
+                print("❌ Deleted tag still appears in active tags")
+        else:
+            print("❌ Failed to delete tag")
+    except Exception as e:
+        print(f"❌ Error deleting tag: {e}")
+    
+    # Test 8: Restore tag
+    print("\n8️⃣ Testing tag restoration...")
+    try:
+        success = db.restore_tag(test_tag_id)
+        if success:
+            print("✅ Tag restored successfully")
+            # Verify it appears in active tags again
+            tags = db.get_all_tags()
+            found = any(tag['tag_id'] == test_tag_id for tag in tags)
+            if found:
+                print("✅ Restored tag correctly appears in active tags")
+            else:
+                print("❌ Restored tag doesn't appear in active tags")
+        else:
+            print("❌ Failed to restore tag")
+    except Exception as e:
+        print(f"❌ Error restoring tag: {e}")
     
     return True
 
@@ -117,7 +172,7 @@ def test_database_tables(db):
             SELECT table_name 
             FROM information_schema.tables 
             WHERE table_schema = 'public' 
-            AND table_name IN ('rfid_tags', 'tag_detection_history')
+            AND table_name = 'rfid_tags'
         """)
         
         tables = cursor.fetchall()
@@ -125,17 +180,30 @@ def test_database_tables(db):
         
         if 'rfid_tags' in table_names:
             print("✅ Table 'rfid_tags' exists")
+            
+            # Check table structure
+            cursor.execute("""
+                SELECT column_name, data_type 
+                FROM information_schema.columns 
+                WHERE table_name = 'rfid_tags' 
+                ORDER BY ordinal_position
+            """)
+            columns = cursor.fetchall()
+            expected_columns = ['tag_id', 'rf_id', 'palette_number', 'name', 'status', 'created', 'deleted']
+            actual_columns = [col[0] for col in columns]
+            
+            if all(col in actual_columns for col in expected_columns):
+                print("✅ Table structure matches new schema")
+            else:
+                print(f"❌ Table structure mismatch. Expected: {expected_columns}, Found: {actual_columns}")
+                return False
         else:
             print("❌ Table 'rfid_tags' missing")
-            
-        if 'tag_detection_history' in table_names:
-            print("✅ Table 'tag_detection_history' exists")
-        else:
-            print("❌ Table 'tag_detection_history' missing")
+            return False
         
         db.connection_pool.putconn(conn)
         
-        return len(table_names) == 2
+        return True
         
     except Exception as e:
         print(f"❌ Error verifying tables: {e}")

@@ -71,59 +71,94 @@ class RFIDDatabase:
             raise
     
     def _create_tables(self):
-        """Create necessary database tables"""
+        """Create necessary database tables if they don't exist"""
         conn = None
         try:
             conn = self.connection_pool.getconn()
             cursor = conn.cursor()
             
-            # Create tags table
+            # Check if tables exist first
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS rfid_tags (
-                    id SERIAL PRIMARY KEY,
-                    tag_id VARCHAR(500) UNIQUE NOT NULL,
-                    tag_data BYTEA,
-                    item_name VARCHAR(255),
-                    write_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    unwrite_date TIMESTAMP,
-                    first_detected TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    last_detected TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    detection_count INTEGER DEFAULT 1,
-                    is_written BOOLEAN DEFAULT FALSE,
-                    notes TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_schema = 'public' 
+                    AND table_name = 'rfid_tags'
                 )
             """)
+            table_exists = cursor.fetchone()[0]
             
-            # Create index on tag_id for faster lookups
+            if table_exists:
+                print("✅ Database tables already exist - preserving existing data")
+                
+                # Check if we need to add new columns for historical data support
+                cursor.execute("""
+                    SELECT column_name 
+                    FROM information_schema.columns 
+                    WHERE table_name = 'rfid_tags' AND table_schema = 'public'
+                """)
+                existing_columns = [row[0] for row in cursor.fetchall()]
+                
+                # Migrate schema if needed (add id column if missing)
+                if 'id' not in existing_columns:
+                    print("🔄 Migrating schema to support historical data...")
+                    
+                    # Add id column as serial primary key
+                    cursor.execute("ALTER TABLE rfid_tags ADD COLUMN id SERIAL")
+                    
+                    # Remove old primary key constraint on tag_id
+                    cursor.execute("ALTER TABLE rfid_tags DROP CONSTRAINT IF EXISTS rfid_tags_pkey")
+                    
+                    # Set new primary key
+                    cursor.execute("ALTER TABLE rfid_tags ADD PRIMARY KEY (id)")
+                    
+                    print("✅ Schema migration completed - historical data support added")
+                
+            else:
+                print("📋 Creating new database tables...")
+                
+                # Create new tags table with historical data support
+                cursor.execute("""
+                    CREATE TABLE rfid_tags (
+                        id SERIAL PRIMARY KEY,
+                        tag_id VARCHAR(500) NOT NULL,
+                        rf_id VARCHAR(255),
+                        palette_number INTEGER,
+                        name VARCHAR(255),
+                        status VARCHAR(50) DEFAULT 'active',
+                        created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        deleted TIMESTAMP NULL
+                    )
+                """)
+                
+                print("✅ New database tables created successfully")
+            
+            # Create/update indexes for faster lookups (these are safe to run multiple times)
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_tag_id ON rfid_tags(tag_id)
             """)
             
-            # Create index on write_date
             cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_write_date ON rfid_tags(write_date)
+                CREATE INDEX IF NOT EXISTS idx_rf_id ON rfid_tags(rf_id)
             """)
             
-            # Create tag history table for tracking all detections
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS tag_detection_history (
-                    id SERIAL PRIMARY KEY,
-                    tag_id VARCHAR(500) NOT NULL,
-                    detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    signal_strength VARCHAR(50),
-                    notes TEXT
-                )
+                CREATE INDEX IF NOT EXISTS idx_palette_number ON rfid_tags(palette_number)
             """)
             
-            # Create index on tag_id for history
             cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_history_tag_id ON tag_detection_history(tag_id)
+                CREATE INDEX IF NOT EXISTS idx_status ON rfid_tags(status)
+            """)
+            
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_tag_status ON rfid_tags(tag_id, status)
+            """)
+            
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_created ON rfid_tags(created)
             """)
             
             conn.commit()
-            print("✅ Database tables created/verified successfully")
+            print("✅ Database indexes verified/created")
             
         except Exception as e:
             print(f"❌ Failed to create tables: {e}")
@@ -134,41 +169,127 @@ class RFIDDatabase:
             if conn:
                 self.connection_pool.putconn(conn)
     
-    def add_or_update_tag(self, tag_id: str, tag_data: bytes, item_name: Optional[str] = None) -> bool:
-        """Add new tag or update existing tag in database"""
+    def add_or_update_tag(self, tag_id: str, rf_id: str = None, palette_number: int = None, name: str = None) -> bool:
+        """Add new tag registration (backward compatible with old and new schema)"""
         conn = None
         try:
             with self.lock:
                 conn = self.connection_pool.getconn()
                 cursor = conn.cursor()
                 
-                # Check if tag exists
-                cursor.execute("SELECT id, detection_count FROM rfid_tags WHERE tag_id = %s", (tag_id,))
-                existing = cursor.fetchone()
-                
-                if existing:
-                    # Update existing tag
-                    tag_db_id, current_count = existing
-                    cursor.execute("""
-                        UPDATE rfid_tags 
-                        SET last_detected = CURRENT_TIMESTAMP,
-                            detection_count = %s,
-                            updated_at = CURRENT_TIMESTAMP,
-                            tag_data = %s
-                        WHERE tag_id = %s
-                    """, (current_count + 1, psycopg2.Binary(tag_data), tag_id))
-                else:
-                    # Insert new tag
-                    cursor.execute("""
-                        INSERT INTO rfid_tags (tag_id, tag_data, item_name, is_written)
-                        VALUES (%s, %s, %s, FALSE)
-                    """, (tag_id, psycopg2.Binary(tag_data), item_name))
-                
-                # Add to detection history
+                # Check if we have the 'id' column (new schema) or not (old schema)
                 cursor.execute("""
-                    INSERT INTO tag_detection_history (tag_id, detected_at)
-                    VALUES (%s, CURRENT_TIMESTAMP)
-                """, (tag_id,))
+                    SELECT column_name 
+                    FROM information_schema.columns 
+                    WHERE table_name = 'rfid_tags' AND table_schema = 'public' AND column_name = 'id'
+                """)
+                has_id_column = cursor.fetchone() is not None
+                
+                if has_id_column:
+                    # New schema - always create new records for history
+                    # Check if tag has existing records
+                    cursor.execute("""
+                        SELECT id, status, rf_id, palette_number, name, created, deleted
+                        FROM rfid_tags 
+                        WHERE tag_id = %s 
+                        ORDER BY created DESC 
+                        LIMIT 1
+                    """, (tag_id,))
+                    existing = cursor.fetchone()
+                    
+                    if existing:
+                        existing_id, current_status, existing_rf_id, existing_palette, existing_name, existing_created, existing_deleted = existing
+                        
+                        if current_status == 'active':
+                            # Tag is currently active - check if this is just an update with same data
+                            if (existing_rf_id == rf_id and 
+                                existing_palette == palette_number and 
+                                existing_name == name):
+                                print(f"⚠️ Tag already registered with same data: {tag_id[:20]}...")
+                                return True
+                            else:
+                                # Different data provided for active tag - create new record anyway for history
+                                print(f"🔄 Creating new record for active tag with updated data: {tag_id[:20]}...")
+                        
+                        elif current_status == 'non_active':
+                            # Tag was unregistered - create new registration record
+                            print(f"🔄 Re-registering previously unregistered tag: {tag_id[:20]}...")
+                        
+                        else:
+                            # Other status (deleted, etc.) - allow new registration
+                            print(f"🔄 Registering tag with previous status {current_status}: {tag_id[:20]}...")
+                    
+                    # Always insert new record to preserve historical data
+                    cursor.execute("""
+                        INSERT INTO rfid_tags (tag_id, rf_id, palette_number, name, status)
+                        VALUES (%s, %s, %s, %s, 'active')
+                    """, (tag_id, rf_id, palette_number, name))
+                    
+                    registration_type = "re-registered" if existing else "registered"
+                    print(f"✅ Tag {registration_type}: {tag_id[:20]}... → New record created")
+                
+                else:
+                    # Old schema - update existing or insert new (original behavior)
+                    cursor.execute("SELECT tag_id, status FROM rfid_tags WHERE tag_id = %s", (tag_id,))
+                    existing = cursor.fetchone()
+                    
+                    if existing:
+                        current_status = existing[1]
+                        
+                        # If tag is non_active, allow re-registration with new data
+                        if current_status == 'non_active':
+                            # Re-register tag: update with new data, set status to active, clear deleted timestamp
+                            update_fields = ['status = %s', 'deleted = NULL']
+                            update_values = ['active']
+                            
+                            if rf_id is not None:
+                                update_fields.append("rf_id = %s")
+                                update_values.append(rf_id)
+                            if palette_number is not None:
+                                update_fields.append("palette_number = %s")
+                                update_values.append(palette_number)
+                            if name is not None:
+                                update_fields.append("name = %s")
+                                update_values.append(name)
+                            
+                            update_values.append(tag_id)
+                            cursor.execute(f"""
+                                UPDATE rfid_tags 
+                                SET {', '.join(update_fields)}
+                                WHERE tag_id = %s
+                            """, tuple(update_values))
+                            print(f"✅ Tag re-registered (old schema): {tag_id[:20]}... (non_active → active)")
+                            
+                        else:
+                            # Update existing active tag (only update non-None values)
+                            update_fields = []
+                            update_values = []
+                            
+                            if rf_id is not None:
+                                update_fields.append("rf_id = %s")
+                                update_values.append(rf_id)
+                            if palette_number is not None:
+                                update_fields.append("palette_number = %s")
+                                update_values.append(palette_number)
+                            if name is not None:
+                                update_fields.append("name = %s")
+                                update_values.append(name)
+                            
+                            if update_fields:
+                                update_values.append(tag_id)
+                                cursor.execute(f"""
+                                    UPDATE rfid_tags 
+                                    SET {', '.join(update_fields)}
+                                    WHERE tag_id = %s
+                                """, tuple(update_values))
+                                print(f"✅ Tag updated (old schema): {tag_id[:20]}...")
+                    else:
+                        # Insert new tag
+                        cursor.execute("""
+                            INSERT INTO rfid_tags (tag_id, rf_id, palette_number, name, status)
+                            VALUES (%s, %s, %s, %s, 'active')
+                        """, (tag_id, rf_id, palette_number, name))
+                        print(f"✅ New tag registered (old schema): {tag_id[:20]}...")
                 
                 conn.commit()
                 return True
@@ -183,32 +304,63 @@ class RFIDDatabase:
                 self.connection_pool.putconn(conn)
     
     def get_tag_info(self, tag_id: str) -> Optional[Dict]:
-        """Get tag information from database"""
+        """Get most recent tag information from database (backward compatible)"""
         conn = None
         try:
             conn = self.connection_pool.getconn()
             cursor = conn.cursor()
             
+            # Check if we have the 'id' column (new schema) or not (old schema)
             cursor.execute("""
-                SELECT tag_id, item_name, write_date, unwrite_date, 
-                       first_detected, last_detected, detection_count, is_written, notes
-                FROM rfid_tags
-                WHERE tag_id = %s
-            """, (tag_id,))
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name = 'rfid_tags' AND table_schema = 'public' AND column_name = 'id'
+            """)
+            has_id_column = cursor.fetchone() is not None
             
-            row = cursor.fetchone()
-            if row:
-                return {
-                    'tag_id': row[0],
-                    'item_name': row[1],
-                    'write_date': row[2],
-                    'unwrite_date': row[3],
-                    'first_detected': row[4],
-                    'last_detected': row[5],
-                    'detection_count': row[6],
-                    'is_written': row[7],
-                    'notes': row[8]
-                }
+            if has_id_column:
+                # New schema with historical records
+                cursor.execute("""
+                    SELECT id, tag_id, rf_id, palette_number, name, status, created, deleted
+                    FROM rfid_tags
+                    WHERE tag_id = %s
+                    ORDER BY created DESC
+                    LIMIT 1
+                """, (tag_id,))
+                
+                row = cursor.fetchone()
+                if row:
+                    return {
+                        'id': row[0],
+                        'tag_id': row[1],
+                        'rf_id': row[2],
+                        'palette_number': row[3],
+                        'name': row[4],
+                        'status': row[5],
+                        'created': row[6],
+                        'deleted': row[7]
+                    }
+            else:
+                # Old schema without id column
+                cursor.execute("""
+                    SELECT tag_id, rf_id, palette_number, name, status, created, deleted
+                    FROM rfid_tags
+                    WHERE tag_id = %s
+                """, (tag_id,))
+                
+                row = cursor.fetchone()
+                if row:
+                    return {
+                        'id': None,  # No id in old schema
+                        'tag_id': row[0],
+                        'rf_id': row[1],
+                        'palette_number': row[2],
+                        'name': row[3],
+                        'status': row[4],
+                        'created': row[5],
+                        'deleted': row[6]
+                    }
+            
             return None
             
         except Exception as e:
@@ -220,32 +372,45 @@ class RFIDDatabase:
     
 
     
-    def get_all_tags(self, limit: int = 100, offset: int = 0) -> List[Dict]:
-        """Get all tags from database with pagination"""
+    def get_all_tags(self, limit: int = 100, offset: int = 0, include_inactive: bool = True) -> List[Dict]:
+        """Get most recent record for each unique tag from database with pagination"""
         conn = None
         try:
             conn = self.connection_pool.getconn()
             cursor = conn.cursor()
             
-            cursor.execute("""
-                SELECT tag_id, item_name, write_date, unwrite_date,
-                       first_detected, last_detected, detection_count, is_written
-                FROM rfid_tags
-                ORDER BY last_detected DESC
-                LIMIT %s OFFSET %s
-            """, (limit, offset))
+            if include_inactive:
+                # Get most recent record for each unique tag_id (exclude only permanently deleted ones)
+                cursor.execute("""
+                    SELECT DISTINCT ON (tag_id) 
+                           id, tag_id, rf_id, palette_number, name, status, created, deleted
+                    FROM rfid_tags
+                    WHERE status != 'deleted'
+                    ORDER BY tag_id, created DESC
+                    LIMIT %s OFFSET %s
+                """, (limit, offset))
+            else:
+                # Only most recent active records for each tag
+                cursor.execute("""
+                    SELECT DISTINCT ON (tag_id) 
+                           id, tag_id, rf_id, palette_number, name, status, created, deleted
+                    FROM rfid_tags
+                    WHERE status = 'active'
+                    ORDER BY tag_id, created DESC
+                    LIMIT %s OFFSET %s
+                """, (limit, offset))
             
             tags = []
             for row in cursor.fetchall():
                 tags.append({
-                    'tag_id': row[0],
-                    'item_name': row[1],
-                    'write_date': row[2],
-                    'unwrite_date': row[3],
-                    'first_detected': row[4],
-                    'last_detected': row[5],
-                    'detection_count': row[6],
-                    'is_written': row[7]
+                    'id': row[0],
+                    'tag_id': row[1],
+                    'rf_id': row[2],
+                    'palette_number': row[3],
+                    'name': row[4],
+                    'status': row[5],
+                    'created': row[6],
+                    'deleted': row[7]
                 })
             
             return tags
@@ -256,9 +421,76 @@ class RFIDDatabase:
         finally:
             if conn:
                 self.connection_pool.putconn(conn)
+
+    def get_tag_history(self, tag_id: str) -> List[Dict]:
+        """Get complete history for a specific tag (backward compatible)"""
+        conn = None
+        try:
+            conn = self.connection_pool.getconn()
+            cursor = conn.cursor()
+            
+            # Check if we have the 'id' column (new schema) or not (old schema)
+            cursor.execute("""
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name = 'rfid_tags' AND table_schema = 'public' AND column_name = 'id'
+            """)
+            has_id_column = cursor.fetchone() is not None
+            
+            if has_id_column:
+                # New schema - can get full history
+                cursor.execute("""
+                    SELECT id, tag_id, rf_id, palette_number, name, status, created, deleted
+                    FROM rfid_tags
+                    WHERE tag_id = %s
+                    ORDER BY created DESC
+                """, (tag_id,))
+                
+                history = []
+                for row in cursor.fetchall():
+                    history.append({
+                        'id': row[0],
+                        'tag_id': row[1],
+                        'rf_id': row[2],
+                        'palette_number': row[3],
+                        'name': row[4],
+                        'status': row[5],
+                        'created': row[6],
+                        'deleted': row[7]
+                    })
+            else:
+                # Old schema - only one record per tag_id
+                cursor.execute("""
+                    SELECT tag_id, rf_id, palette_number, name, status, created, deleted
+                    FROM rfid_tags
+                    WHERE tag_id = %s
+                """, (tag_id,))
+                
+                history = []
+                row = cursor.fetchone()
+                if row:
+                    history.append({
+                        'id': None,  # No ID in old schema
+                        'tag_id': row[0],
+                        'rf_id': row[1],
+                        'palette_number': row[2],
+                        'name': row[3],
+                        'status': row[4],
+                        'created': row[5],
+                        'deleted': row[6]
+                    })
+            
+            return history
+            
+        except Exception as e:
+            print(f"❌ Database error in get_tag_history: {e}")
+            return []
+        finally:
+            if conn:
+                self.connection_pool.putconn(conn)
     
     def search_tags(self, search_term: str) -> List[Dict]:
-        """Search tags by tag_id or item_name"""
+        """Search tags by tag_id, rf_id, or name - returns most recent record for each matching tag"""
         conn = None
         try:
             conn = self.connection_pool.getconn()
@@ -266,25 +498,26 @@ class RFIDDatabase:
             
             search_pattern = f"%{search_term}%"
             cursor.execute("""
-                SELECT tag_id, item_name, write_date, unwrite_date,
-                       first_detected, last_detected, detection_count, is_written
+                SELECT DISTINCT ON (tag_id) 
+                       id, tag_id, rf_id, palette_number, name, status, created, deleted
                 FROM rfid_tags
-                WHERE tag_id ILIKE %s OR item_name ILIKE %s
-                ORDER BY last_detected DESC
+                WHERE status != 'deleted'
+                  AND (tag_id ILIKE %s OR rf_id ILIKE %s OR name ILIKE %s)
+                ORDER BY tag_id, created DESC
                 LIMIT 50
-            """, (search_pattern, search_pattern))
+            """, (search_pattern, search_pattern, search_pattern))
             
             tags = []
             for row in cursor.fetchall():
                 tags.append({
-                    'tag_id': row[0],
-                    'item_name': row[1],
-                    'write_date': row[2],
-                    'unwrite_date': row[3],
-                    'first_detected': row[4],
-                    'last_detected': row[5],
-                    'detection_count': row[6],
-                    'is_written': row[7]
+                    'id': row[0],
+                    'tag_id': row[1],
+                    'rf_id': row[2],
+                    'palette_number': row[3],
+                    'name': row[4],
+                    'status': row[5],
+                    'created': row[6],
+                    'deleted': row[7]
                 })
             
             return tags
@@ -297,80 +530,236 @@ class RFIDDatabase:
                 self.connection_pool.putconn(conn)
     
     def get_statistics(self) -> Dict:
-        """Get database statistics"""
+        """Get database statistics based on most recent record for each unique tag"""
         conn = None
         try:
             conn = self.connection_pool.getconn()
             cursor = conn.cursor()
             
-            # Total tags
-            cursor.execute("SELECT COUNT(*) FROM rfid_tags")
-            total_tags = cursor.fetchone()[0]
-            
-            # Written tags
-            cursor.execute("SELECT COUNT(*) FROM rfid_tags WHERE is_written = TRUE")
-            written_tags = cursor.fetchone()[0]
-            
-            # Total detections
-            cursor.execute("SELECT SUM(detection_count) FROM rfid_tags")
-            total_detections = cursor.fetchone()[0] or 0
-            
-            # Recent detections (last 24 hours)
+            # Get unique tags with their most recent status
             cursor.execute("""
-                SELECT COUNT(*) FROM tag_detection_history 
-                WHERE detected_at > CURRENT_TIMESTAMP - INTERVAL '24 hours'
+                SELECT COUNT(DISTINCT tag_id) as unique_tags,
+                       COUNT(CASE WHEN latest.status = 'active' THEN 1 END) as active_tags,
+                       COUNT(CASE WHEN latest.status = 'non_active' THEN 1 END) as non_active_tags,
+                       COUNT(CASE WHEN latest.status = 'deleted' THEN 1 END) as deleted_tags,
+                       COUNT(CASE WHEN latest.status = 'active' AND latest.palette_number IS NOT NULL THEN 1 END) as assigned_tags,
+                       COUNT(*) as total_records
+                FROM (
+                    SELECT DISTINCT ON (tag_id) tag_id, status, palette_number
+                    FROM rfid_tags
+                    ORDER BY tag_id, created DESC
+                ) latest
+                WHERE latest.status != 'deleted'
             """)
-            recent_detections = cursor.fetchone()[0]
             
-            return {
-                'total_tags': total_tags,
-                'written_tags': written_tags,
-                'unwritten_tags': total_tags - written_tags,
-                'total_detections': total_detections,
-                'recent_detections_24h': recent_detections
-            }
+            row = cursor.fetchone()
+            if row:
+                unique_tags, active_tags, non_active_tags, deleted_tags, assigned_tags, total_records = row
+                
+                # Total records in database
+                cursor.execute("SELECT COUNT(*) FROM rfid_tags")
+                total_records = cursor.fetchone()[0]
+                
+                return {
+                    'unique_tags': unique_tags or 0,
+                    'total_records': total_records or 0,
+                    'active_tags': active_tags or 0,
+                    'non_active_tags': non_active_tags or 0,
+                    'deleted_tags': deleted_tags or 0,
+                    'assigned_tags': assigned_tags or 0,
+                    'unassigned_tags': (active_tags or 0) - (assigned_tags or 0),
+                    'can_reregister': non_active_tags or 0  # Tags that can be re-registered
+                }
+            else:
+                return {
+                    'unique_tags': 0,
+                    'total_records': 0,
+                    'active_tags': 0,
+                    'non_active_tags': 0,
+                    'deleted_tags': 0,
+                    'assigned_tags': 0,
+                    'unassigned_tags': 0,
+                    'can_reregister': 0
+                }
             
         except Exception as e:
             print(f"❌ Database error in get_statistics: {e}")
             return {
-                'total_tags': 0,
-                'written_tags': 0,
-                'unwritten_tags': 0,
-                'total_detections': 0,
-                'recent_detections_24h': 0
+                'unique_tags': 0,
+                'total_records': 0,
+                'active_tags': 0,
+                'non_active_tags': 0,
+                'deleted_tags': 0,
+                'assigned_tags': 0,
+                'unassigned_tags': 0,
+                'can_reregister': 0
             }
         finally:
             if conn:
                 self.connection_pool.putconn(conn)
     
     def delete_tag(self, tag_id: str) -> bool:
-        """Delete a tag from the database"""
+        """Soft delete a tag from the database (mark as deleted)"""
         conn = None
         try:
             with self.lock:
                 conn = self.connection_pool.getconn()
                 cursor = conn.cursor()
                 
-                # Check if tag exists first
-                cursor.execute("SELECT id FROM rfid_tags WHERE tag_id = %s", (tag_id,))
+                # Check if tag exists and is not already deleted
+                cursor.execute("SELECT tag_id FROM rfid_tags WHERE tag_id = %s AND deleted IS NULL", (tag_id,))
                 existing = cursor.fetchone()
                 
                 if existing:
-                    # Delete from tag detection history first (foreign key constraint)
-                    cursor.execute("DELETE FROM tag_detection_history WHERE tag_id = %s", (tag_id,))
-                    
-                    # Delete the main tag record
-                    cursor.execute("DELETE FROM rfid_tags WHERE tag_id = %s", (tag_id,))
+                    # Soft delete - set deleted timestamp
+                    cursor.execute("""
+                        UPDATE rfid_tags 
+                        SET deleted = CURRENT_TIMESTAMP, status = 'deleted'
+                        WHERE tag_id = %s
+                    """, (tag_id,))
                     
                     conn.commit()
-                    print(f"✅ Tag deleted successfully: {tag_id[:20]}...")
+                    print(f"✅ Tag soft deleted successfully: {tag_id[:20]}...")
                     return True
                 else:
-                    print(f"⚠️  Tag not found in database: {tag_id[:20]}...")
+                    print(f"⚠️  Tag not found or already deleted: {tag_id[:20]}...")
                     return False
                     
         except Exception as e:
             print(f"❌ Database error in delete_tag: {e}")
+            if conn:
+                conn.rollback()
+            return False
+        finally:
+            if conn:
+                self.connection_pool.putconn(conn)
+
+    def unregister_tag(self, tag_id: str) -> bool:
+        """Unregister a tag (set status to non_active and fill deleted timestamp - backward compatible)"""
+        conn = None
+        try:
+            with self.lock:
+                conn = self.connection_pool.getconn()
+                cursor = conn.cursor()
+                
+                # Check if we have the 'id' column (new schema) or not (old schema)
+                cursor.execute("""
+                    SELECT column_name 
+                    FROM information_schema.columns 
+                    WHERE table_name = 'rfid_tags' AND table_schema = 'public' AND column_name = 'id'
+                """)
+                has_id_column = cursor.fetchone() is not None
+                
+                if has_id_column:
+                    # New schema - find the most recent active record for this tag
+                    cursor.execute("""
+                        SELECT id, status FROM rfid_tags 
+                        WHERE tag_id = %s AND status = 'active'
+                        ORDER BY created DESC
+                        LIMIT 1
+                    """, (tag_id,))
+                    existing = cursor.fetchone()
+                    
+                    if existing:
+                        record_id, current_status = existing
+                        # Unregister - set status to non_active and set deleted timestamp on this specific record
+                        cursor.execute("""
+                            UPDATE rfid_tags 
+                            SET deleted = CURRENT_TIMESTAMP, status = 'non_active'
+                            WHERE id = %s
+                        """, (record_id,))
+                        
+                        print(f"✅ Tag unregistered (new schema): {tag_id[:20]}... (record ID: {record_id}, status: active → non_active)")
+                    else:
+                        print(f"⚠️  No active records found for tag: {tag_id[:20]}...")
+                        return False
+                        
+                else:
+                    # Old schema - update tag directly
+                    cursor.execute("""
+                        UPDATE rfid_tags 
+                        SET deleted = CURRENT_TIMESTAMP, status = 'non_active'
+                        WHERE tag_id = %s AND status = 'active'
+                    """, (tag_id,))
+                    
+                    if cursor.rowcount > 0:
+                        print(f"✅ Tag unregistered (old schema): {tag_id[:20]}... (status: active → non_active)")
+                    else:
+                        print(f"⚠️  No active records found for tag: {tag_id[:20]}...")
+                        return False
+                
+                conn.commit()
+                return True
+                    
+        except Exception as e:
+            print(f"❌ Database error in unregister_tag: {e}")
+            if conn:
+                conn.rollback()
+            return False
+        finally:
+            if conn:
+                self.connection_pool.putconn(conn)
+
+    def restore_tag(self, tag_id: str) -> bool:
+        """Restore a soft-deleted tag"""
+        conn = None
+        try:
+            with self.lock:
+                conn = self.connection_pool.getconn()
+                cursor = conn.cursor()
+                
+                # Check if tag exists and is deleted
+                cursor.execute("SELECT tag_id FROM rfid_tags WHERE tag_id = %s AND deleted IS NOT NULL", (tag_id,))
+                existing = cursor.fetchone()
+                
+                if existing:
+                    # Restore tag - clear deleted timestamp and reset status
+                    cursor.execute("""
+                        UPDATE rfid_tags 
+                        SET deleted = NULL, status = 'active'
+                        WHERE tag_id = %s
+                    """, (tag_id,))
+                    
+                    conn.commit()
+                    print(f"✅ Tag restored successfully: {tag_id[:20]}...")
+                    return True
+                else:
+                    print(f"⚠️  Tag not found or not deleted: {tag_id[:20]}...")
+                    return False
+                    
+        except Exception as e:
+            print(f"❌ Database error in restore_tag: {e}")
+            if conn:
+                conn.rollback()
+            return False
+        finally:
+            if conn:
+                self.connection_pool.putconn(conn)
+    
+    def update_tag_status(self, tag_id: str, status: str) -> bool:
+        """Update tag status (active, inactive, etc.)"""
+        conn = None
+        try:
+            with self.lock:
+                conn = self.connection_pool.getconn()
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                    UPDATE rfid_tags 
+                    SET status = %s
+                    WHERE tag_id = %s AND deleted IS NULL
+                """, (status, tag_id))
+                
+                if cursor.rowcount > 0:
+                    conn.commit()
+                    print(f"✅ Tag status updated: {tag_id[:20]}... → {status}")
+                    return True
+                else:
+                    print(f"⚠️  Tag not found or already deleted: {tag_id[:20]}...")
+                    return False
+                    
+        except Exception as e:
+            print(f"❌ Database error in update_tag_status: {e}")
             if conn:
                 conn.rollback()
             return False

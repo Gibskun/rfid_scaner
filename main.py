@@ -164,16 +164,18 @@ class FastRFIDScanner:
                             tag_info_db = self.db.get_tag_info(tag_hex)
                             if tag_info_db:
                                 tag_in_database = True
-                                print(f"💾 Database: Tag found!")
-                                if tag_info_db.get('item_name'):
-                                    print(f"   Item: {tag_info_db['item_name']}")
-                                if tag_info_db.get('is_written'):
-                                    print(f"   Status: Written on {tag_info_db['write_date']}")
-                                else:
-                                    print(f"   Status: Not written yet")
+                                print(f"💾 Database: ✅ REGISTERED TAG")
+                                print(f"   🆔 RFID: {tag_info_db.get('rf_id', 'N/A')}")
+                                if tag_info_db.get('palette_number'):
+                                    print(f"   📦 Palette: #{tag_info_db['palette_number']}")
+                                if tag_info_db.get('name'):
+                                    print(f"   🏷️  Name: {tag_info_db['name']}")
+                                print(f"   📊 Status: {tag_info_db.get('status', 'unknown')}")
+                                if tag_info_db.get('created'):
+                                    print(f"   📅 Created: {tag_info_db['created']}")
                             else:
                                 print(f"💾 Database: ⚠️  NEW TAG - Not in database!")
-                                print(f"   This tag needs to be written and registered.")
+                                print(f"   🔄 This tag needs to be registered on the web interface.")
                         except Exception as e:
                             print(f"⚠️  Database lookup failed: {e}")
                     

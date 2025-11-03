@@ -418,20 +418,20 @@
             transform: translateY(-1px);
         }
 
-        .deletion-status {
+        .deletion-status, .unregister-status {
             padding: 10px;
             border-radius: 6px;
             font-size: 0.9em;
             text-align: center;
         }
 
-        .deletion-status.success {
+        .deletion-status.success, .unregister-status.success {
             background: #c6f6d5;
             color: #22543d;
             border: 1px solid #9ae6b4;
         }
 
-        .deletion-status.error {
+        .deletion-status.error, .unregister-status.error {
             background: #fed7d7;
             color: #742a2a;
             border: 1px solid #fc8181;
@@ -473,12 +473,12 @@
     <div class="container">
         <!-- Header -->
         <div class="header">
-            <h1>🗑️ RFID Tag Deletion Dashboard</h1>
-            <p>Delete registered RFID tags from database system</p>
+            <h1>� RFID Tag Unregister Dashboard</h1>
+            <p>Unregister RFID tags from the system while preserving historical data</p>
             
             <div class="warning-note">
                 <h3>⚠️ Important Notice</h3>
-                <p>This page allows you to <strong>permanently delete</strong> RFID tags from the database. Only registered tags can be deleted. Deleted tags can be re-registered on the registration page.</p>
+                <p>This page allows you to <strong>unregister</strong> RFID tags from the system. Unregistered tags maintain their historical data and can be re-registered later. Only active registered tags can be unregistered.</p>
             </div>
             
             <div class="header-controls">
@@ -512,7 +512,7 @@
         <div class="main-content">
             <!-- Statistics Panel -->
             <div class="panel">
-                <h2>📊 Deletion Statistics</h2>
+                <h2>📊 System Statistics</h2>
                 
                 <div class="stats-grid">
                     <div class="stat-card">
@@ -524,24 +524,24 @@
                         <div class="stat-label">Active Tags</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-value" id="totalDetections">0</div>
-                        <div class="stat-label">Total Detections</div>
-                    </div>
-                    <div class="stat-card">
                         <div class="stat-value" id="registeredTags">0</div>
                         <div class="stat-label">Registered Tags</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="nonActiveTags">0</div>
+                        <div class="stat-label">Unregistered Tags</div>
                     </div>
                 </div>
             </div>
 
             <!-- Active Tags Panel -->
             <div class="panel">
-                <h2>🏷️ Active Tags - Deletable (<span id="tagCount">0</span>)</h2>
+                <h2>🏷️ Active Registered Tags - Can Unregister (<span id="tagCount">0</span>)</h2>
                 
                 <div class="tag-list" id="tagList">
                     <div class="empty-state">
                         <p>No active registered tags detected</p>
-                        <p>Place registered RFID tags near the reader to delete them</p>
+                        <p>Place registered RFID tags near the reader to unregister them</p>
                     </div>
                 </div>
             </div>
@@ -549,44 +549,46 @@
 
         <!-- Activity Panel -->
         <div class="panel">
-            <h2>📋 Recent Deletion Activity</h2>
+            <h2>📋 Recent Unregister Activity</h2>
             
             <div class="activity-list" id="activityList">
                 <div class="empty-state">
-                    <p>No recent deletion activity</p>
-                    <p>Activity will appear here when tags are deleted</p>
+                    <p>No recent unregister activity</p>
+                    <p>Activity will appear here when tags are unregistered</p>
                 </div>
             </div>
         </div>
 
         <!-- Footer -->
         <div class="footer">
-            <p>RFID Tag Deletion Dashboard | Real-time updates via WebSocket | Last updated: <span id="lastUpdate">Never</span></p>
+            <p>RFID Tag Unregister Dashboard | Real-time updates via WebSocket | Last updated: <span id="lastUpdate">Never</span></p>
         </div>
     </div>
 
-    <!-- Deletion Modal -->
-    <div id="deletionModal" class="modal" style="display: none;">
+    <!-- Unregister Modal -->
+    <div id="unregisterModal" class="modal" style="display: none;">
         <div class="modal-content">
             <div class="modal-header">
-                <h3>🗑️ Delete RFID Tag</h3>
-                <span class="close" onclick="closeDeletionModal()">&times;</span>
+                <h3>� Unregister RFID Tag</h3>
+                <span class="close" onclick="closeUnregisterModal()">&times;</span>
             </div>
             
             <div class="modal-body">
                 <div class="tag-deletion-info">
                     <p><strong>Tag ID:</strong> <span id="modalTagId">-</span></p>
+                    <p><strong>RF ID:</strong> <span id="modalRfId">-</span></p>
                     <p><strong>Item Name:</strong> <span id="modalItemName">-</span></p>
+                    <p><strong>Palette Number:</strong> <span id="modalPaletteNumber">-</span></p>
                     <p><strong>Detection Time:</strong> <span id="modalDetectionTime">-</span></p>
-                    <p class="deletion-warning">⚠️ This action will permanently delete this tag from the database. The tag can be re-registered later if needed.</p>
+                    <p class="deletion-warning">⚠️ This action will unregister this tag (set status to non_active). Historical data will be preserved and the tag can be re-registered later.</p>
                 </div>
                 
                 <div class="modal-buttons">
-                    <button class="btn btn-danger" onclick="deleteCurrentTag()">🗑️ Delete Tag</button>
-                    <button class="btn btn-secondary" onclick="cancelDeletion()">❌ Cancel</button>
+                    <button class="btn btn-danger" onclick="unregisterCurrentTag()">� Unregister Tag</button>
+                    <button class="btn btn-secondary" onclick="cancelUnregister()">❌ Cancel</button>
                 </div>
                 
-                <div id="deletionStatus" class="deletion-status"></div>
+                <div id="unregisterStatus" class="unregister-status"></div>
             </div>
         </div>
     </div>
@@ -646,8 +648,17 @@
             // Update statistics
             document.getElementById('totalScans').textContent = stats.total_scans || 0;
             document.getElementById('activeTags').textContent = stats.active_tag_count || 0;
-            document.getElementById('totalDetections').textContent = stats.total_detections || 0;
             document.getElementById('registeredTags').textContent = calculateRegisteredTags(data.active_tags || {});
+            
+            // Get database statistics for non-active tags count
+            fetch('/api/database/stats')
+                .then(response => response.json())
+                .then(dbStats => {
+                    if (dbStats.success && dbStats.data) {
+                        document.getElementById('nonActiveTags').textContent = dbStats.data.non_active_tags || 0;
+                    }
+                })
+                .catch(error => console.log('Error fetching database stats:', error));
             
             // Update uptime
             if (stats.uptime) {
@@ -661,7 +672,7 @@
             // Update scanning status
             document.getElementById('scanningStatus').textContent = stats.scanning ? 'Active' : 'Inactive';
             
-            // Update active tags (only show registered tags that can be deleted)
+            // Update active tags (only show registered tags that can be unregistered)
             updateTagList(data.active_tags || {});
             
             // Update activity list
@@ -670,15 +681,15 @@
             // Update last update time
             document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
             
-            // Check for registered tags that can be deleted
-            checkForDeletableTags(data.active_tags || {});
+            // Check for registered tags that can be unregistered
+            checkForUnregisterableTags(data.active_tags || {});
         }
         
         function calculateRegisteredTags(activeTags) {
             let registered = 0;
             for (const tagId in activeTags) {
-                // In deletion mode, we consider a tag registered if it has an item name (from database)
-                if (activeTags[tagId].item_name) {
+                // In unregister mode, we consider a tag registered if it has is_registered = true and status = 'active'
+                if (activeTags[tagId].is_registered && activeTags[tagId].status === 'active') {
                     registered++;
                 }
             }
@@ -689,38 +700,41 @@
             const tagList = document.getElementById('tagList');
             const tagCount = document.getElementById('tagCount');
             
-            // Filter only registered tags (those with item names from database)
-            const registeredTags = {};
+            // Filter only active registered tags that can be unregistered
+            const unregisterableTags = {};
             for (const tagId in activeTags) {
-                if (activeTags[tagId].item_name) {
-                    registeredTags[tagId] = activeTags[tagId];
+                const tagInfo = activeTags[tagId];
+                if (tagInfo.is_registered && tagInfo.status === 'active') {
+                    unregisterableTags[tagId] = tagInfo;
                 }
             }
             
-            const registeredCount = Object.keys(registeredTags).length;
-            tagCount.textContent = registeredCount;
+            const unregisterableCount = Object.keys(unregisterableTags).length;
+            tagCount.textContent = unregisterableCount;
             
-            if (registeredCount === 0) {
+            if (unregisterableCount === 0) {
                 tagList.innerHTML = `
                     <div class="empty-state">
                         <p>No active registered tags detected</p>
-                        <p>Place registered RFID tags near the reader to delete them</p>
+                        <p>Place registered RFID tags near the reader to unregister them</p>
                     </div>
                 `;
                 return;
             }
             
             let html = '';
-            for (const [tagId, tagInfo] of Object.entries(registeredTags)) {
+            for (const [tagId, tagInfo] of Object.entries(unregisterableTags)) {
                 const displayId = tagInfo.id || tagId;
                 const signalClass = `signal-${(tagInfo.signal_strength || 'new').toLowerCase()}`;
                 
                 html += `
-                    <div class="tag-item can-delete" data-tag-id="${tagId}" onclick="promptDeleteTag('${tagId}')">
+                    <div class="tag-item can-delete" data-tag-id="${tagId}" onclick="promptUnregisterTag('${tagId}')">
                         <div class="tag-info">
                             <div class="tag-id">${displayId}</div>
                             <div class="tag-details">
-                                Item: ${tagInfo.item_name || 'Unknown'} | 
+                                RF ID: ${tagInfo.rf_id || 'N/A'} | 
+                                Name: ${tagInfo.name || 'N/A'} | 
+                                Palette: ${tagInfo.palette_number || 'N/A'} |
                                 Count: ${tagInfo.count || 1} | 
                                 Duration: ${formatDuration(tagInfo.duration || 0)}
                             </div>
@@ -761,55 +775,69 @@
             activityList.innerHTML = html;
         }
         
-        function checkForDeletableTags(activeTags) {
-            // Check for registered tags that can be deleted
+        function checkForUnregisterableTags(activeTags) {
+            // Check for registered tags that can be unregistered
             for (const tagId in activeTags) {
                 const tagInfo = activeTags[tagId];
-                if (tagInfo.item_name && !currentTag) {
-                    // This is a registered tag that can be deleted
-                    // We'll let the user click on it to delete
+                if (tagInfo.is_registered && tagInfo.status === 'active' && !currentTag) {
+                    // This is an active registered tag that can be unregistered
+                    // We'll let the user click on it to unregister
                 }
             }
         }
         
-        function promptDeleteTag(tagId) {
-            // Find tag info
-            const tagElements = document.querySelectorAll(`[data-tag-id="${tagId}"]`);
-            if (tagElements.length === 0) return;
+        function promptUnregisterTag(tagId) {
+            // Find tag info from active tags data
+            socket.emit('get_status'); // Get fresh data
             
-            const tagElement = tagElements[0];
-            const tagInfo = tagElement.querySelector('.tag-details').textContent;
-            const itemName = tagInfo.split('Item: ')[1]?.split(' |')[0] || 'Unknown';
-            
-            // Set current tag
-            currentTag = {
-                id: tagId,
-                item_name: itemName,
-                detection_time: new Date().toLocaleTimeString()
-            };
-            
-            // Update modal
-            document.getElementById('modalTagId').textContent = tagId;
-            document.getElementById('modalItemName').textContent = itemName;
-            document.getElementById('modalDetectionTime').textContent = currentTag.detection_time;
-            
-            // Clear previous status
-            document.getElementById('deletionStatus').textContent = '';
-            document.getElementById('deletionStatus').className = 'deletion-status';
-            
-            // Show modal
-            document.getElementById('deletionModal').style.display = 'flex';
+            // Get tag info from API for accurate data
+            fetch(`/api/tag/${encodeURIComponent(tagId)}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success && data.data) {
+                        const tagInfo = data.data;
+                        
+                        // Set current tag
+                        currentTag = {
+                            id: tagId,
+                            rf_id: tagInfo.rf_id || 'N/A',
+                            name: tagInfo.name || 'N/A',
+                            palette_number: tagInfo.palette_number || 'N/A',
+                            detection_time: new Date().toLocaleTimeString()
+                        };
+                        
+                        // Update modal
+                        document.getElementById('modalTagId').textContent = tagId;
+                        document.getElementById('modalRfId').textContent = currentTag.rf_id;
+                        document.getElementById('modalItemName').textContent = currentTag.name;
+                        document.getElementById('modalPaletteNumber').textContent = currentTag.palette_number;
+                        document.getElementById('modalDetectionTime').textContent = currentTag.detection_time;
+                        
+                        // Clear previous status
+                        document.getElementById('unregisterStatus').textContent = '';
+                        document.getElementById('unregisterStatus').className = 'unregister-status';
+                        
+                        // Show modal
+                        document.getElementById('unregisterModal').style.display = 'flex';
+                    } else {
+                        alert('Failed to get tag information');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error getting tag info:', error);
+                    alert('Error getting tag information');
+                });
         }
         
-        function deleteCurrentTag() {
+        function unregisterCurrentTag() {
             if (!currentTag) return;
             
-            const statusDiv = document.getElementById('deletionStatus');
-            statusDiv.textContent = 'Deleting tag...';
-            statusDiv.className = 'deletion-status';
+            const statusDiv = document.getElementById('unregisterStatus');
+            statusDiv.textContent = 'Unregistering tag...';
+            statusDiv.className = 'unregister-status';
             
-            // Send delete request
-            fetch('/api/delete-tag', {
+            // Send unregister request
+            fetch('/api/unregister-tag', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -821,32 +849,32 @@
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
-                    statusDiv.textContent = data.message || 'Tag deleted successfully!';
-                    statusDiv.className = 'deletion-status success';
+                    statusDiv.textContent = data.message || 'Tag unregistered successfully!';
+                    statusDiv.className = 'unregister-status success';
                     
                     // Close modal after short delay
                     setTimeout(() => {
-                        closeDeletionModal();
+                        closeUnregisterModal();
                         refreshData();
                     }, 1500);
                 } else {
-                    statusDiv.textContent = data.error || 'Failed to delete tag';
-                    statusDiv.className = 'deletion-status error';
+                    statusDiv.textContent = data.error || 'Failed to unregister tag';
+                    statusDiv.className = 'unregister-status error';
                 }
             })
             .catch(error => {
-                console.error('Error deleting tag:', error);
+                console.error('Error unregistering tag:', error);
                 statusDiv.textContent = 'Network error occurred';
-                statusDiv.className = 'deletion-status error';
+                statusDiv.className = 'unregister-status error';
             });
         }
         
-        function cancelDeletion() {
-            closeDeletionModal();
+        function cancelUnregister() {
+            closeUnregisterModal();
         }
         
-        function closeDeletionModal() {
-            document.getElementById('deletionModal').style.display = 'none';
+        function closeUnregisterModal() {
+            document.getElementById('unregisterModal').style.display = 'none';
             currentTag = null;
         }
         

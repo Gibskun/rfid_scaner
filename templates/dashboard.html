@@ -407,6 +407,17 @@
             box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
         }
 
+        .input-group input[type="number"] {
+            appearance: textfield;
+            -moz-appearance: textfield;
+        }
+
+        .input-group input[type="number"]::-webkit-outer-spin-button,
+        .input-group input[type="number"]::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+
         .modal-buttons {
             display: flex;
             gap: 15px;
@@ -584,12 +595,25 @@
                 <div class="tag-registration-info">
                     <p><strong>Tag ID:</strong> <span id="modalTagId">-</span></p>
                     <p><strong>Detection Time:</strong> <span id="modalDetectionTime">-</span></p>
-                    <p class="registration-note">⚠️ This tag is not registered in the database. Please provide an item name to register it.</p>
+                    <p class="registration-note">⚠️ This tag is not registered in the database. Please provide the registration details.</p>
                 </div>
                 
                 <div class="input-group">
-                    <label for="itemNameInput">Item Name:</label>
-                    <input type="text" id="itemNameInput" placeholder="Enter item name (e.g., Laptop Charger)" maxlength="255" />
+                    <label for="rfIdInput">RFID (RF ID):</label>
+                    <div style="display: flex; gap: 10px; align-items: stretch;">
+                        <input type="text" id="rfIdInput" placeholder="Enter RFID or click Generate" maxlength="255" style="flex: 1;" />
+                        <button type="button" class="btn btn-secondary" onclick="generateRFID()" style="flex: none; padding: 8px 15px; white-space: nowrap;">🎲 Generate</button>
+                    </div>
+                </div>
+                
+                <div class="input-group">
+                    <label for="paletteNumberInput">Palette Number (optional):</label>
+                    <input type="number" id="paletteNumberInput" placeholder="Enter palette number (e.g., 123)" min="1" max="999999" />
+                </div>
+                
+                <div class="input-group">
+                    <label for="nameInput">Name (optional):</label>
+                    <input type="text" id="nameInput" placeholder="Enter item name (e.g., Laptop Charger)" maxlength="255" />
                 </div>
                 
                 <div class="modal-buttons">
@@ -650,13 +674,35 @@
                 const signalClass = `signal-${(tagInfo.signal_strength || 'new').toLowerCase()}`;
                 const displayId = tagId.length > 30 ? tagId.substring(0, 30) + '...' : tagId;
                 
+                // Build registration info for registered tags
+                let registrationInfo = '';
+                if (tagInfo.is_registered) {
+                    const infoParts = [];
+                    if (tagInfo.rf_id) {
+                        infoParts.push(`🆔 RFID: ${tagInfo.rf_id}`);
+                    }
+                    if (tagInfo.palette_number) {
+                        infoParts.push(`📦 Palette: #${tagInfo.palette_number}`);
+                    }
+                    if (tagInfo.name) {
+                        infoParts.push(`🏷️ Name: ${tagInfo.name}`);
+                    }
+                    registrationInfo = infoParts.join(' | ');
+                } else {
+                    registrationInfo = '⚠️ UNREGISTERED - Click to register';
+                }
+                
+                const itemClass = tagInfo.is_registered ? '' : 'needs-registration';
+                
                 html += `
-                    <div class="tag-item">
+                    <div class="tag-item ${itemClass}">
                         <div class="tag-info">
                             <div class="tag-id">${displayId}</div>
                             <div class="tag-details">
-                                Detections: ${tagInfo.count || 1} | 
-                                Last seen: ${tagInfo.last_seen_relative || 'Just now'}
+                                ${registrationInfo}
+                            </div>
+                            <div class="tag-details" style="margin-top: 3px; font-size: 0.75em;">
+                                Detections: ${tagInfo.count || 1} | Last seen: ${tagInfo.last_seen || 'Just now'}
                             </div>
                         </div>
                         <div class="signal-strength ${signalClass}">
@@ -745,17 +791,21 @@
             
             // Update modal content
             document.getElementById('modalTagId').textContent = tagData.tag_hex;
-            document.getElementById('modalDetectionTime').textContent = new Date(tagData.first_detected).toLocaleString();
-            document.getElementById('itemNameInput').value = '';
+            document.getElementById('modalDetectionTime').textContent = new Date().toLocaleString();
+            
+            // Clear input fields
+            document.getElementById('rfIdInput').value = '';
+            document.getElementById('paletteNumberInput').value = '';
+            document.getElementById('nameInput').value = '';
             document.getElementById('registrationStatus').textContent = '';
             document.getElementById('registrationStatus').className = 'registration-status';
             
             // Show modal
             document.getElementById('registrationModal').style.display = 'flex';
             
-            // Focus on input
+            // Focus on RFID input
             setTimeout(() => {
-                document.getElementById('itemNameInput').focus();
+                document.getElementById('rfIdInput').focus();
             }, 300);
         }
 
@@ -767,27 +817,54 @@
             setTimeout(checkPendingRegistrations, 500);
         }
 
+        function generateRFID() {
+            // Generate a unique RFID (RF ID) - using timestamp and random numbers
+            const timestamp = Date.now().toString(36);
+            const random = Math.random().toString(36).substring(2, 8);
+            const rfid = `RF${timestamp}${random}`.toUpperCase();
+            document.getElementById('rfIdInput').value = rfid;
+        }
+
         async function registerCurrentTag() {
             if (!currentRegistrationTag) return;
             
-            const itemName = document.getElementById('itemNameInput').value.trim();
-            if (!itemName) {
-                showRegistrationStatus('Please enter an item name', 'error');
+            const rfId = document.getElementById('rfIdInput').value.trim();
+            const paletteNumber = document.getElementById('paletteNumberInput').value.trim();
+            const name = document.getElementById('nameInput').value.trim();
+            
+            // Validate inputs - at least RFID is required, palette and name are optional but at least one should be provided
+            if (!rfId) {
+                showRegistrationStatus('Please enter or generate an RFID', 'error');
+                return;
+            }
+            
+            if (!paletteNumber && !name) {
+                showRegistrationStatus('Please enter either a palette number or name (or both)', 'error');
                 return;
             }
 
             try {
                 showRegistrationStatus('Registering tag...', '');
                 
+                const requestData = {
+                    tag_id: currentRegistrationTag.tag_hex,
+                    rf_id: rfId
+                };
+                
+                // Add optional fields only if they have values
+                if (paletteNumber) {
+                    requestData.palette_number = parseInt(paletteNumber);
+                }
+                if (name) {
+                    requestData.name = name;
+                }
+                
                 const response = await fetch('/api/register-tag', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({
-                        tag_id: currentRegistrationTag.tag_hex,
-                        item_name: itemName
-                    })
+                    body: JSON.stringify(requestData)
                 });
 
                 const result = await response.json();
@@ -901,12 +978,15 @@
             document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
         }
 
-        // Enter key support for item name input
+        // Enter key support for registration inputs
         document.addEventListener('DOMContentLoaded', function() {
-            document.getElementById('itemNameInput').addEventListener('keypress', function(e) {
-                if (e.key === 'Enter') {
-                    registerCurrentTag();
-                }
+            const inputs = ['rfIdInput', 'paletteNumberInput', 'nameInput'];
+            inputs.forEach(inputId => {
+                document.getElementById(inputId).addEventListener('keypress', function(e) {
+                    if (e.key === 'Enter') {
+                        registerCurrentTag();
+                    }
+                });
             });
         });
 

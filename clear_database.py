@@ -28,26 +28,16 @@ def clear_database():
         
         print("\n🗑️  Deleting all records...")
         
-        # Delete from history table first (foreign key constraint)
-        cursor.execute("DELETE FROM tag_detection_history")
-        history_count = cursor.rowcount
-        print(f"   ✅ Deleted {history_count} detection history records")
-        
-        # Delete from main tags table
+        # Delete from main tags table (no foreign key constraints in new schema)
         cursor.execute("DELETE FROM rfid_tags")
         tags_count = cursor.rowcount
         print(f"   ✅ Deleted {tags_count} tag records")
-        
-        # Reset sequences
-        cursor.execute("ALTER SEQUENCE rfid_tags_id_seq RESTART WITH 1")
-        cursor.execute("ALTER SEQUENCE tag_detection_history_id_seq RESTART WITH 1")
-        print("   ✅ Reset ID sequences")
         
         conn.commit()
         db.connection_pool.putconn(conn)
         
         print("\n✅ Database cleared successfully!")
-        print(f"   Total records deleted: {tags_count + history_count}")
+        print(f"   Total records deleted: {tags_count}")
         print("\n💡 The database is now empty and ready for fresh data.")
         return True
         

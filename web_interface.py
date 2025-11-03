@@ -154,8 +154,67 @@ def api_database_tags():
         try:
             limit = int(request.args.get('limit', 100))
             offset = int(request.args.get('offset', 0))
-            tags = db.get_all_tags(limit=limit, offset=offset)
+            include_inactive = request.args.get('include_inactive', 'true').lower() == 'true'
+            tags = db.get_all_tags(limit=limit, offset=offset, include_inactive=include_inactive)
             return jsonify({'success': True, 'data': tags})
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)})
+    return jsonify({'success': False, 'error': 'Database not connected'})
+
+@app.route('/api/database/non-active-tags')
+def api_database_non_active_tags():
+    """Get all non-active tags that can be re-registered"""
+    if db:
+        try:
+            # Get most recent non_active records for each tag
+            conn = db.connection_pool.getconn()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT DISTINCT ON (tag_id) 
+                       id, tag_id, rf_id, palette_number, name, status, created, deleted
+                FROM rfid_tags
+                WHERE status = 'non_active'
+                ORDER BY tag_id, created DESC
+                LIMIT 50
+            """)
+            
+            tags = []
+            for row in cursor.fetchall():
+                tags.append({
+                    'id': row[0],
+                    'tag_id': row[1],
+                    'rf_id': row[2],
+                    'palette_number': row[3],
+                    'name': row[4],
+                    'status': row[5],
+                    'created': row[6].isoformat() if row[6] else None,
+                    'deleted': row[7].isoformat() if row[7] else None
+                })
+            
+            db.connection_pool.putconn(conn)
+            return jsonify({'success': True, 'data': tags})
+            
+        except Exception as e:
+            if 'conn' in locals():
+                db.connection_pool.putconn(conn)
+            return jsonify({'success': False, 'error': str(e)})
+    return jsonify({'success': False, 'error': 'Database not connected'})
+
+@app.route('/api/tag-history/<path:tag_id>')
+def api_tag_history(tag_id):
+    """Get complete history for a specific tag"""
+    if db:
+        try:
+            history = db.get_tag_history(tag_id)
+            # Convert datetime objects to strings
+            for record in history:
+                if record.get('created'):
+                    record['created'] = record['created'].isoformat()
+                if record.get('deleted'):
+                    record['deleted'] = record['deleted'].isoformat()
+            
+            return jsonify({'success': True, 'data': history, 'total_records': len(history)})
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)})
     return jsonify({'success': False, 'error': 'Database not connected'})
@@ -183,14 +242,10 @@ def api_tag_info(tag_id):
             tag_info = db.get_tag_info(tag_id)
             if tag_info:
                 # Convert datetime objects to strings
-                if tag_info.get('write_date'):
-                    tag_info['write_date'] = tag_info['write_date'].isoformat()
-                if tag_info.get('unwrite_date'):
-                    tag_info['unwrite_date'] = tag_info['unwrite_date'].isoformat()
-                if tag_info.get('first_detected'):
-                    tag_info['first_detected'] = tag_info['first_detected'].isoformat()
-                if tag_info.get('last_detected'):
-                    tag_info['last_detected'] = tag_info['last_detected'].isoformat()
+                if tag_info.get('created'):
+                    tag_info['created'] = tag_info['created'].isoformat()
+                if tag_info.get('deleted'):
+                    tag_info['deleted'] = tag_info['deleted'].isoformat()
                 return jsonify({'success': True, 'data': tag_info})
             else:
                 return jsonify({'success': False, 'error': 'Tag not found'})
@@ -209,22 +264,40 @@ def api_pending_registrations():
 
 @app.route('/api/register-tag', methods=['POST'])
 def api_register_tag():
-    """Register a tag with an item name"""
+    """Register a tag with RF ID and optional palette number and name"""
     try:
         data = request.get_json()
         tag_id = data.get('tag_id')
-        item_name = data.get('item_name', '').strip()
+        rf_id = data.get('rf_id', '').strip()
+        palette_number = data.get('palette_number')
+        name = data.get('name', '').strip() or None
         
         if not tag_id:
             return jsonify({'success': False, 'error': 'Tag ID is required'})
         
-        if not item_name:
-            return jsonify({'success': False, 'error': 'Item name is required'})
+        if not rf_id:
+            return jsonify({'success': False, 'error': 'RFID (RF ID) is required'})
         
-        success = register_tag(tag_id, item_name, db)
+        if not palette_number and not name:
+            return jsonify({'success': False, 'error': 'Either palette number or name (or both) is required'})
+        
+        # Convert palette_number to int if provided
+        if palette_number is not None:
+            try:
+                palette_number = int(palette_number)
+            except (ValueError, TypeError):
+                return jsonify({'success': False, 'error': 'Invalid palette number format'})
+        
+        success = register_tag(tag_id, name, db, rf_id, palette_number)
         
         if success:
-            return jsonify({'success': True, 'message': f'Tag registered successfully as "{item_name}"'})
+            message_parts = [f'RFID: {rf_id}']
+            if palette_number:
+                message_parts.append(f'Palette: #{palette_number}')
+            if name:
+                message_parts.append(f'Name: {name}')
+            message = f'Tag registered successfully - {", ".join(message_parts)}'
+            return jsonify({'success': True, 'message': message})
         else:
             return jsonify({'success': False, 'error': 'Failed to register tag'})
             
@@ -269,6 +342,80 @@ def api_delete_tag():
             return jsonify({'success': True, 'message': f'Tag deleted successfully: {tag_id[:20]}...'})
         else:
             return jsonify({'success': False, 'error': 'Failed to delete tag or tag not found'})
+            
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/api/unregister-tag', methods=['POST'])
+def api_unregister_tag():
+    """Unregister a tag (set status to non_active and fill deleted timestamp)"""
+    try:
+        data = request.get_json()
+        tag_id = data.get('tag_id')
+        
+        if not tag_id:
+            return jsonify({'success': False, 'error': 'Tag ID is required'})
+        
+        if db:
+            success = db.unregister_tag(tag_id)
+            if success:
+                # Also update shared data to reflect the change
+                from shared_data import unregister_tag_from_shared_data
+                unregister_tag_from_shared_data(tag_id)
+                
+                return jsonify({'success': True, 'message': f'Tag unregistered successfully: {tag_id[:20]}...'})
+            else:
+                return jsonify({'success': False, 'error': 'Failed to unregister tag or tag not found/not active'})
+        else:
+            return jsonify({'success': False, 'error': 'Database not connected'})
+            
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/api/update-tag-status', methods=['POST'])
+def api_update_tag_status():
+    """Update tag status (active, inactive, etc.)"""
+    try:
+        data = request.get_json()
+        tag_id = data.get('tag_id')
+        status = data.get('status', '').strip()
+        
+        if not tag_id:
+            return jsonify({'success': False, 'error': 'Tag ID is required'})
+        
+        if not status:
+            return jsonify({'success': False, 'error': 'Status is required'})
+        
+        if db:
+            success = db.update_tag_status(tag_id, status)
+            if success:
+                return jsonify({'success': True, 'message': f'Tag status updated to "{status}"'})
+            else:
+                return jsonify({'success': False, 'error': 'Failed to update tag status'})
+        else:
+            return jsonify({'success': False, 'error': 'Database not connected'})
+            
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/api/restore-tag', methods=['POST'])
+def api_restore_tag():
+    """Restore a soft-deleted tag"""
+    try:
+        data = request.get_json()
+        tag_id = data.get('tag_id')
+        
+        if not tag_id:
+            return jsonify({'success': False, 'error': 'Tag ID is required'})
+        
+        if db:
+            success = db.restore_tag(tag_id)
+            if success:
+                return jsonify({'success': True, 'message': f'Tag restored successfully'})
+            else:
+                return jsonify({'success': False, 'error': 'Failed to restore tag or tag not found'})
+        else:
+            return jsonify({'success': False, 'error': 'Database not connected'})
             
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
