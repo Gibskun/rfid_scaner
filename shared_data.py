@@ -38,6 +38,9 @@ class SharedRFIDData:
     # Unregistered tags awaiting user input
     pending_registration: Dict[str, dict] = field(default_factory=dict)
     registration_queue: List[str] = field(default_factory=list)
+    
+    # Page mode for automatic processing
+    current_page_mode: str = "normal"  # normal, auto_deactivate
 
 # Global shared data instance
 shared_rfid_data = SharedRFIDData()
@@ -58,6 +61,17 @@ def update_scanning_status(scanning: bool):
         if scanning and shared_rfid_data.start_time == 0:
             shared_rfid_data.start_time = time.time()
 
+def set_page_mode(mode: str):
+    """Set the current page mode for automatic processing"""
+    with _shared_data_lock:
+        shared_rfid_data.current_page_mode = mode
+        print(f"🔧 Page mode changed to: {mode}")
+
+def get_page_mode() -> str:
+    """Get the current page mode"""
+    with _shared_data_lock:
+        return shared_rfid_data.current_page_mode
+
 def add_tag_detection(tag_hex: str, tag_data: bytes, db_connection=None):
     """Add new tag detection safely - with automatic unregistration for active tags"""
     current_time = datetime.now()
@@ -68,24 +82,92 @@ def add_tag_detection(tag_hex: str, tag_data: bytes, db_connection=None):
         item_name = None
         auto_unregistered = False
         
+        # Check database for status cycling (both new and existing tags)
+        if db_connection:
+            try:
+                tag_info_db = db_connection.get_tag_info(tag_hex)
+                if tag_info_db:
+                    # Tag exists in database - check its status for cycling
+                    tag_status = tag_info_db.get('status', 'unknown')
+                    
+                    # STATUS WORKFLOW: Check if tag is in the workflow (active, available, on production)
+                    if tag_status in STATUS_WORKFLOW:
+                        old_status = tag_status
+                        new_status = STATUS_WORKFLOW[tag_status]
+                        
+                        print(f"🔄 AUTO-STATUS-CYCLING detected tag: {tag_hex[:20]}...")
+                        print(f"   📋 Tag Info: RFID={tag_info_db.get('rf_id', 'N/A')}, Name={tag_info_db.get('name', 'N/A')}, Palette={tag_info_db.get('palette_number', 'N/A')}")
+                        print(f"   📊 Status Change: {old_status} → {new_status}")
+                        
+                        # Perform automatic status update
+                        status_success = db_connection.update_tag_status(tag_hex, new_status)
+                        if status_success:
+                            print(f"✅ AUTOMATIC STATUS UPDATE SUCCESSFUL: {old_status} → {new_status}")
+                            
+                            # Add immediate activity for status cycling
+                            tag_display_id = tag_hex[:20] + "..." if len(tag_hex) > 20 else tag_hex
+                            activity = {
+                                'time': current_time.strftime('%H:%M:%S'),
+                                'type': 'tag_status_cycled',
+                                'message': f'🔄 STATUS-CYCLED: {tag_display_id} → RFID: {tag_info_db.get("rf_id", "N/A")}, Name: {tag_info_db.get("name", "N/A")}, Status: {old_status} → {new_status}',
+                                'tag_id': tag_hex,
+                                'old_status': old_status,
+                                'new_status': new_status
+                            }
+                            shared_rfid_data.recent_activity.insert(0, activity)
+                            
+                            # Update the tag info for the web display to show the status change
+                            tag_info_db['status'] = new_status
+                            tag_info_db['status_changed'] = True
+                            tag_info_db['old_status'] = old_status
+                            tag_info_db['new_status'] = new_status
+                        else:
+                            print(f"❌ AUTOMATIC STATUS UPDATE FAILED: {tag_hex[:20]}...")
+            except Exception as e:
+                print(f"⚠️ Database lookup error during status cycling: {e}")
+
         # Update internal active tags
         if tag_hex in shared_rfid_data.active_tags:
-            # Existing tag - check if it's already registered
+            # Existing tag - update tracking info
             tag_info = shared_rfid_data.active_tags[tag_hex]
             tag_info['last_seen'] = current_time
             tag_info['count'] += 1
-            is_in_database = tag_info.get('is_registered', False)
-            item_name = tag_info.get('item_name', None)
-        else:
-            # New tag - check if it's in database
+            
+            # Re-check database status after potential cycling
             if db_connection:
                 try:
                     tag_info_db = db_connection.get_tag_info(tag_hex)
                     if tag_info_db:
-                        # Tag exists in database - check its status
+                        is_in_database = True
+                        item_name = tag_info_db.get('name') or tag_info_db.get('rf_id')
+                        tag_info['is_registered'] = True
+                        tag_info['item_name'] = item_name
+                    else:
+                        is_in_database = False
+                        item_name = None
+                        tag_info['is_registered'] = False
+                except Exception as e:
+                    print(f"⚠️ Database re-check error: {e}")
+                    # Use existing values
+                    is_in_database = tag_info.get('is_registered', False)
+                    item_name = tag_info.get('item_name', None)
+            else:
+                # Use existing values if no database
+                is_in_database = tag_info.get('is_registered', False)
+                item_name = tag_info.get('item_name', None)
+        else:
+            # New tag - get database info (status cycling already handled above)
+            if db_connection:
+                try:
+                    tag_info_db = db_connection.get_tag_info(tag_hex)
+                    if tag_info_db:
+                        # Tag exists in database - get current status after cycling
                         tag_status = tag_info_db.get('status', 'unknown')
+                        
+                        # Handle legacy active status or non_active status
                         if tag_status == 'active':
-                            # AUTOMATIC UNREGISTRATION: Detected active tag - auto-unregister it
+                            # LEGACY AUTO-UNREGISTRATION (for backward compatibility)
+                            # This handles old 'active' status that's not in the new workflow
                             print(f"🔄 AUTO-UNREGISTERING detected active tag: {tag_hex[:20]}...")
                             print(f"   📋 Tag Info: RFID={tag_info_db.get('rf_id', 'N/A')}, Name={tag_info_db.get('name', 'N/A')}, Palette={tag_info_db.get('palette_number', 'N/A')}")
                             
@@ -115,8 +197,50 @@ def add_tag_detection(tag_hex: str, tag_data: bytes, db_connection=None):
                             # Tag is unregistered but exists in database
                             is_in_database = False  # Treat as unregistered for display
                             item_name = f"[UNREGISTERED] {tag_info_db.get('rf_id', 'Unknown')}"
+                        else:
+                            # Tag has other status - normal registered behavior
+                            is_in_database = True
+                            item_name = tag_info_db.get('name') or tag_info_db.get('rf_id')
                 except Exception as e:
                     print(f"⚠️ Database lookup error: {e}")
+                    
+            # Check for AUTO-DEACTIVATION mode
+            if (db_connection and 
+                shared_rfid_data.current_page_mode == "auto_deactivate"):
+                
+                try:
+                    tag_info_db = db_connection.get_tag_info(tag_hex)
+                    if tag_info_db and tag_info_db.get('status') != 'non_active':
+                        old_status = tag_info_db.get('status', 'unknown')
+                        
+                        print(f"🚫 AUTO-DEACTIVATING detected tag: {tag_hex[:20]}...")
+                        print(f"   📋 Tag Info: RFID={tag_info_db.get('rf_id', 'N/A')}, Name={tag_info_db.get('name', 'N/A')}, Palette={tag_info_db.get('palette_number', 'N/A')}")
+                        print(f"   📊 Status Change: {old_status} → non_active")
+                        
+                        # Perform automatic deactivation
+                        deactivate_success = db_connection.deactivate_tag(tag_hex)
+                        if deactivate_success:
+                            print(f"✅ AUTOMATIC DEACTIVATION SUCCESSFUL: {old_status} → non_active")
+                            
+                            # Add immediate activity for auto-deactivation
+                            tag_display_id = tag_hex[:20] + "..." if len(tag_hex) > 20 else tag_hex
+                            activity = {
+                                'time': current_time.strftime('%H:%M:%S'),
+                                'type': 'tag_auto_deactivated',
+                                'message': f'🚫 AUTO-DEACTIVATED: {tag_display_id} → RFID: {tag_info_db.get("rf_id", "N/A")}, Name: {tag_info_db.get("name", "N/A")}, Status: {old_status} → non_active',
+                                'tag_id': tag_hex,
+                                'old_status': old_status,
+                                'new_status': 'non_active'
+                            }
+                            shared_rfid_data.recent_activity.insert(0, activity)
+                            
+                            # Mark as deactivated for display
+                            is_in_database = False  # Now it's deactivated
+                            item_name = f"[AUTO-DEACTIVATED] {tag_info_db.get('rf_id', 'Unknown')}"
+                        else:
+                            print(f"❌ AUTOMATIC DEACTIVATION FAILED: {tag_hex[:20]}...")
+                except Exception as e:
+                    print(f"⚠️ Database error during auto-deactivation: {e}")
             
             # Add to active tags
             shared_rfid_data.active_tags[tag_hex] = {
@@ -210,6 +334,20 @@ def add_tag_detection(tag_hex: str, tag_data: bytes, db_connection=None):
             except Exception as e:
                 print(f"⚠️ Error getting additional tag info: {e}")
         
+        # Check if this tag had a status change
+        status_changed = False
+        old_status = None
+        new_status = None
+        if is_in_database and db_connection:
+            try:
+                tag_info_db = db_connection.get_tag_info(tag_hex)
+                if tag_info_db:
+                    status_changed = tag_info_db.get('status_changed', False)
+                    old_status = tag_info_db.get('old_status', None)
+                    new_status = tag_info_db.get('new_status', None)
+            except Exception as e:
+                print(f"⚠️ Error checking status change: {e}")
+
         shared_rfid_data.web_active_tags[tag_hex] = {
             'id': tag_display_id,
             'full_id': tag_hex,
@@ -222,7 +360,10 @@ def add_tag_detection(tag_hex: str, tag_data: bytes, db_connection=None):
             'palette_number': palette_number,
             'name': name,
             'status': status,
-            'is_registered': tag_info.get('is_registered', False)
+            'is_registered': tag_info.get('is_registered', False),
+            'status_changed': status_changed,
+            'old_status': old_status,
+            'new_status': new_status
         }
         
         shared_rfid_data.total_detections += 1
@@ -511,3 +652,209 @@ def unregister_tag_from_shared_data(tag_hex: str):
         shared_rfid_data.recent_activity.insert(0, activity)
         
         return True
+
+# Status workflow constants
+STATUS_WORKFLOW = {
+    'active': 'available',
+    'available': 'on production', 
+    'on production': 'done',
+    'done': 'done'  # Final state, no further transitions
+}
+
+def add_tag_detection_with_status_cycling(tag_hex: str, tag_data: bytes, db_connection=None):
+    """Add new tag detection with automatic status cycling: active → available → on production → done"""
+    current_time = datetime.now()
+    
+    with _shared_data_lock:
+        # Initialize variables
+        is_in_database = False
+        item_name = None
+        status_changed = False
+        old_status = None
+        new_status = None
+        
+        # Update internal active tags
+        if tag_hex in shared_rfid_data.active_tags:
+            # Existing tag - update tracking
+            tag_info = shared_rfid_data.active_tags[tag_hex]
+            tag_info['last_seen'] = current_time
+            tag_info['count'] += 1
+            is_in_database = tag_info.get('is_registered', False)
+            item_name = tag_info.get('item_name', None)
+        else:
+            # New tag - check if it's in database and cycle status
+            if db_connection:
+                try:
+                    tag_info_db = db_connection.get_tag_info(tag_hex)
+                    if tag_info_db:
+                        current_status = tag_info_db.get('status', 'unknown')
+                        
+                        # Check if this status can be cycled
+                        if current_status in STATUS_WORKFLOW:
+                            new_status = STATUS_WORKFLOW[current_status]
+                            
+                            # Only update if status actually changes
+                            if new_status != current_status:
+                                print(f"🔄 AUTO-STATUS-CYCLING detected tag: {tag_hex[:20]}...")
+                                print(f"   📋 Tag Info: RFID={tag_info_db.get('rf_id', 'N/A')}, Name={tag_info_db.get('name', 'N/A')}, Palette={tag_info_db.get('palette_number', 'N/A')}")
+                                print(f"   📊 Status: {current_status} → {new_status}")
+                                
+                                # Update status in database
+                                status_success = db_connection.update_tag_status(tag_hex, new_status)
+                                if status_success:
+                                    status_changed = True
+                                    old_status = current_status
+                                    is_in_database = True
+                                    item_name = tag_info_db.get('name') or tag_info_db.get('rf_id')
+                                    
+                                    print(f"✅ AUTOMATIC STATUS UPDATE SUCCESSFUL: {tag_hex[:20]}... ({old_status} → {new_status})")
+                                    
+                                    # Add immediate activity for status change
+                                    tag_display_id = tag_hex[:20] + "..." if len(tag_hex) > 20 else tag_hex
+                                    activity = {
+                                        'time': current_time.strftime('%H:%M:%S'),
+                                        'type': 'tag_status_cycled',
+                                        'message': f'🔄 AUTO-STATUS-CYCLED: {tag_display_id} → {old_status} → {new_status} | RFID: {tag_info_db.get("rf_id", "N/A")}, Name: {tag_info_db.get("name", "N/A")}',
+                                        'tag_id': tag_hex,
+                                        'old_status': old_status,
+                                        'new_status': new_status
+                                    }
+                                    shared_rfid_data.recent_activity.insert(0, activity)
+                                else:
+                                    print(f"❌ AUTOMATIC STATUS UPDATE FAILED: {tag_hex[:20]}...")
+                                    is_in_database = True  # Still in database, just failed to update
+                                    item_name = tag_info_db.get('name') or tag_info_db.get('rf_id')
+                            else:
+                                # Status is already at final state or same state
+                                is_in_database = True
+                                item_name = f"[{current_status.upper()}] {tag_info_db.get('rf_id', 'Unknown')}"
+                                if current_status == 'done':
+                                    print(f"🏁 Tag already at final status 'done': {tag_hex[:20]}...")
+                                else:
+                                    print(f"📌 Tag status unchanged: {tag_hex[:20]}... (status: {current_status})")
+                        else:
+                            # Status not in workflow (e.g., non_active, deleted)
+                            is_in_database = False
+                            item_name = f"[{current_status.upper()}] {tag_info_db.get('rf_id', 'Unknown')}"
+                    else:
+                        # Tag not in database
+                        is_in_database = False
+                        item_name = None
+                except Exception as e:
+                    print(f"⚠️ Database lookup error: {e}")
+            
+            # Add to active tags
+            shared_rfid_data.active_tags[tag_hex] = {
+                'first_seen': current_time,
+                'last_seen': current_time,
+                'count': 1,
+                'data': tag_data,
+                'item_name': item_name,
+                'is_registered': is_in_database,
+                'status_changed': status_changed,
+                'old_status': old_status,
+                'new_status': new_status
+            }
+            
+            # If not in database, add to pending registration
+            if not is_in_database:
+                shared_rfid_data.pending_registration[tag_hex] = {
+                    'tag_hex': tag_hex,
+                    'tag_data': list(tag_data),
+                    'first_detected': current_time.strftime('%H:%M:%S'),
+                    'awaiting_input': True,
+                    'item_name': ''
+                }
+                
+                if tag_hex not in shared_rfid_data.registration_queue:
+                    shared_rfid_data.registration_queue.append(tag_hex)
+            
+            # Add to recent activity (only if not already status-changed)
+            if not status_changed:
+                tag_display_id = tag_hex[:20] + "..." if len(tag_hex) > 20 else tag_hex
+                
+                if is_in_database:
+                    # Build detailed message for registered tags
+                    message_parts = [f'Registered tag: {tag_display_id}']
+                    if db_connection:
+                        try:
+                            tag_info_db = db_connection.get_tag_info(tag_hex)
+                            if tag_info_db:
+                                details = []
+                                if tag_info_db.get('rf_id'):
+                                    details.append(f"RFID: {tag_info_db['rf_id']}")
+                                if tag_info_db.get('palette_number'):
+                                    details.append(f"Palette: #{tag_info_db['palette_number']}")
+                                if tag_info_db.get('name'):
+                                    details.append(f"Name: {tag_info_db['name']}")
+                                if tag_info_db.get('status'):
+                                    details.append(f"Status: {tag_info_db['status']}")
+                                if details:
+                                    message_parts.append(f"({', '.join(details)})")
+                        except Exception as e:
+                            print(f"⚠️ Error building activity message: {e}")
+                    
+                    message = ' '.join(message_parts)
+                else:
+                    message = f'New tag detected: {tag_display_id} - NEEDS REGISTRATION'
+                
+                activity = {
+                    'time': current_time.strftime('%H:%M:%S'),
+                    'type': 'new_tag' if not is_in_database else 'registered_tag',
+                    'message': message,
+                    'tag_id': tag_hex,
+                    'needs_registration': not is_in_database
+                }
+                shared_rfid_data.recent_activity.insert(0, activity)
+                
+                # Keep only last 50 activities
+                if len(shared_rfid_data.recent_activity) > 50:
+                    shared_rfid_data.recent_activity = shared_rfid_data.recent_activity[:50]
+        
+        # Update web-friendly data
+        tag_info = shared_rfid_data.active_tags[tag_hex]
+        tag_display_id = tag_hex[:20] + "..." if len(tag_hex) > 20 else tag_hex
+        
+        # Calculate signal strength
+        if tag_info['count'] > 1:
+            detection_rate = tag_info['count'] / max(1, (current_time - tag_info['first_seen']).total_seconds())
+            signal_strength = "Strong" if detection_rate > 2 else "Medium" if detection_rate > 0.5 else "Weak"
+        else:
+            signal_strength = "New"
+        
+        # Get additional database info for registered tags
+        rf_id = None
+        palette_number = None
+        name = tag_info.get('item_name', None)
+        status = 'unregistered'
+        
+        if is_in_database and db_connection:
+            try:
+                tag_info_db = db_connection.get_tag_info(tag_hex)
+                if tag_info_db:
+                    rf_id = tag_info_db.get('rf_id')
+                    palette_number = tag_info_db.get('palette_number')
+                    name = tag_info_db.get('name')
+                    status = tag_info_db.get('status', 'unknown')
+            except Exception as e:
+                print(f"⚠️ Error getting additional tag info: {e}")
+        
+        shared_rfid_data.web_active_tags[tag_hex] = {
+            'id': tag_display_id,
+            'full_id': tag_hex,
+            'first_seen': tag_info['first_seen'].strftime('%H:%M:%S'),
+            'last_seen': current_time.strftime('%H:%M:%S.%f')[:-3],
+            'count': tag_info['count'],
+            'signal_strength': signal_strength,
+            'duration': (current_time - tag_info['first_seen']).total_seconds(),
+            'rf_id': rf_id,
+            'palette_number': palette_number,
+            'name': name,
+            'status': status,
+            'is_registered': tag_info.get('is_registered', False),
+            'status_changed': status_changed,
+            'old_status': old_status,
+            'new_status': new_status
+        }
+        
+        shared_rfid_data.total_detections += 1

@@ -113,6 +113,12 @@ class RFIDDatabase:
                     
                     print("✅ Schema migration completed - historical data support added")
                 
+                # Add description column for deactivation reason if missing
+                if 'description' not in existing_columns:
+                    print("🔄 Adding description column for deactivation tracking...")
+                    cursor.execute("ALTER TABLE rfid_tags ADD COLUMN description TEXT")
+                    print("✅ Description column added successfully")
+                
             else:
                 print("📋 Creating new database tables...")
                 
@@ -126,7 +132,8 @@ class RFIDDatabase:
                         name VARCHAR(255),
                         status VARCHAR(50) DEFAULT 'active',
                         created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        deleted TIMESTAMP NULL
+                        deleted TIMESTAMP NULL,
+                        description TEXT
                     )
                 """)
                 
@@ -319,47 +326,108 @@ class RFIDDatabase:
             has_id_column = cursor.fetchone() is not None
             
             if has_id_column:
+                # Check if description column exists
+                cursor.execute("""
+                    SELECT column_name 
+                    FROM information_schema.columns 
+                    WHERE table_name = 'rfid_tags' AND table_schema = 'public' AND column_name = 'description'
+                """)
+                has_description = cursor.fetchone() is not None
+                
                 # New schema with historical records
-                cursor.execute("""
-                    SELECT id, tag_id, rf_id, palette_number, name, status, created, deleted
-                    FROM rfid_tags
-                    WHERE tag_id = %s
-                    ORDER BY created DESC
-                    LIMIT 1
-                """, (tag_id,))
-                
-                row = cursor.fetchone()
-                if row:
-                    return {
-                        'id': row[0],
-                        'tag_id': row[1],
-                        'rf_id': row[2],
-                        'palette_number': row[3],
-                        'name': row[4],
-                        'status': row[5],
-                        'created': row[6],
-                        'deleted': row[7]
-                    }
+                if has_description:
+                    cursor.execute("""
+                        SELECT id, tag_id, rf_id, palette_number, name, status, created, deleted, description
+                        FROM rfid_tags
+                        WHERE tag_id = %s
+                        ORDER BY created DESC
+                        LIMIT 1
+                    """, (tag_id,))
+                    
+                    row = cursor.fetchone()
+                    if row:
+                        return {
+                            'id': row[0],
+                            'tag_id': row[1],
+                            'rf_id': row[2],
+                            'palette_number': row[3],
+                            'name': row[4],
+                            'status': row[5],
+                            'created': row[6],
+                            'deleted': row[7],
+                            'description': row[8]
+                        }
+                else:
+                    cursor.execute("""
+                        SELECT id, tag_id, rf_id, palette_number, name, status, created, deleted
+                        FROM rfid_tags
+                        WHERE tag_id = %s
+                        ORDER BY created DESC
+                        LIMIT 1
+                    """, (tag_id,))
+                    
+                    row = cursor.fetchone()
+                    if row:
+                        return {
+                            'id': row[0],
+                            'tag_id': row[1],
+                            'rf_id': row[2],
+                            'palette_number': row[3],
+                            'name': row[4],
+                            'status': row[5],
+                            'created': row[6],
+                            'deleted': row[7],
+                            'description': None
+                        }
             else:
-                # Old schema without id column
+                # Old schema without id column - check if description exists
                 cursor.execute("""
-                    SELECT tag_id, rf_id, palette_number, name, status, created, deleted
-                    FROM rfid_tags
-                    WHERE tag_id = %s
-                """, (tag_id,))
+                    SELECT column_name 
+                    FROM information_schema.columns 
+                    WHERE table_name = 'rfid_tags' AND table_schema = 'public' AND column_name = 'description'
+                """)
+                has_description = cursor.fetchone() is not None
                 
-                row = cursor.fetchone()
-                if row:
-                    return {
-                        'id': None,  # No id in old schema
-                        'tag_id': row[0],
-                        'rf_id': row[1],
-                        'palette_number': row[2],
-                        'name': row[3],
-                        'status': row[4],
-                        'created': row[5],
-                        'deleted': row[6]
-                    }
+                if has_description:
+                    cursor.execute("""
+                        SELECT tag_id, rf_id, palette_number, name, status, created, deleted, description
+                        FROM rfid_tags
+                        WHERE tag_id = %s
+                    """, (tag_id,))
+                    
+                    row = cursor.fetchone()
+                    if row:
+                        return {
+                            'id': None,  # No id in old schema
+                            'tag_id': row[0],
+                            'rf_id': row[1],
+                            'palette_number': row[2],
+                            'name': row[3],
+                            'status': row[4],
+                            'created': row[5],
+                            'deleted': row[6],
+                            'description': row[7]
+                        }
+                else:
+                    cursor.execute("""
+                        SELECT tag_id, rf_id, palette_number, name, status, created, deleted
+                        FROM rfid_tags
+                        WHERE tag_id = %s
+                    """, (tag_id,))
+                    
+                    row = cursor.fetchone()
+                    if row:
+                        return {
+                            'id': None,  # No id in old schema
+                            'tag_id': row[0],
+                            'rf_id': row[1],
+                            'palette_number': row[2],
+                            'name': row[3],
+                            'status': row[4],
+                            'created': row[5],
+                            'deleted': row[6],
+                            'description': None
+                        }
             
             return None
             
@@ -760,6 +828,126 @@ class RFIDDatabase:
                     
         except Exception as e:
             print(f"❌ Database error in update_tag_status: {e}")
+            if conn:
+                conn.rollback()
+            return False
+        finally:
+            if conn:
+                self.connection_pool.putconn(conn)
+
+    def deactivate_tag(self, tag_id: str) -> bool:
+        """Deactivate a tag (change ANY status to non_active and store last status in description)"""
+        conn = None
+        try:
+            with self.lock:
+                conn = self.connection_pool.getconn()
+                cursor = conn.cursor()
+                
+                # Check if we have the 'id' column (new schema) or not (old schema)
+                cursor.execute("""
+                    SELECT column_name 
+                    FROM information_schema.columns 
+                    WHERE table_name = 'rfid_tags' AND table_schema = 'public' AND column_name = 'id'
+                """)
+                has_id_column = cursor.fetchone() is not None
+                
+                if has_id_column:
+                    # New schema - find the most recent non-deleted record for this tag (any status)
+                    cursor.execute("""
+                        SELECT id, status, rf_id, name, palette_number FROM rfid_tags 
+                        WHERE tag_id = %s AND deleted IS NULL
+                        ORDER BY created DESC
+                        LIMIT 1
+                    """, (tag_id,))
+                    existing = cursor.fetchone()
+                    
+                    if existing:
+                        record_id, current_status, rf_id, name, palette_number = existing
+                        
+                        # Skip if already non_active
+                        if current_status == 'non_active':
+                            print(f"⚠️  Tag is already non_active: {tag_id[:20]}...")
+                            return False
+                        
+                        # Create description with last status and tag info
+                        description = f"Deactivated from status: {current_status}"
+                        if rf_id:
+                            description += f" | RFID: {rf_id}"
+                        if name:
+                            description += f" | Name: {name}"
+                        if palette_number:
+                            description += f" | Palette: #{palette_number}"
+                        description += f" | Deactivated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                        
+                        # Deactivate - set status to non_active, set deleted timestamp, and add description
+                        cursor.execute("""
+                            UPDATE rfid_tags 
+                            SET deleted = CURRENT_TIMESTAMP, status = 'non_active', description = %s
+                            WHERE id = %s
+                        """, (description, record_id))
+                        
+                        print(f"✅ Tag deactivated (new schema): {tag_id[:20]}... (record ID: {record_id}, status: {current_status} → non_active)")
+                        print(f"   📋 Description: {description}")
+                    else:
+                        print(f"⚠️  No active records found for tag: {tag_id[:20]}...")
+                        return False
+                        
+                else:
+                    # Old schema - find tag with any status except non_active
+                    cursor.execute("""
+                        SELECT tag_id, status, rf_id, name, palette_number FROM rfid_tags 
+                        WHERE tag_id = %s AND status != 'non_active'
+                        LIMIT 1
+                    """, (tag_id,))
+                    existing = cursor.fetchone()
+                    
+                    if existing:
+                        tag_id_db, current_status, rf_id, name, palette_number = existing
+                        
+                        # Create description with last status and tag info
+                        description = f"Deactivated from status: {current_status}"
+                        if rf_id:
+                            description += f" | RFID: {rf_id}"
+                        if name:
+                            description += f" | Name: {name}"
+                        if palette_number:
+                            description += f" | Palette: #{palette_number}"
+                        description += f" | Deactivated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                        
+                        # Check if description column exists (old schema might not have it)
+                        cursor.execute("""
+                            SELECT column_name 
+                            FROM information_schema.columns 
+                            WHERE table_name = 'rfid_tags' AND table_schema = 'public' AND column_name = 'description'
+                        """)
+                        has_description = cursor.fetchone() is not None
+                        
+                        if has_description:
+                            # Update with description
+                            cursor.execute("""
+                                UPDATE rfid_tags 
+                                SET deleted = CURRENT_TIMESTAMP, status = 'non_active', description = %s
+                                WHERE tag_id = %s
+                            """, (description, tag_id))
+                        else:
+                            # Update without description (fallback)
+                            cursor.execute("""
+                                UPDATE rfid_tags 
+                                SET deleted = CURRENT_TIMESTAMP, status = 'non_active'
+                                WHERE tag_id = %s
+                            """, (tag_id,))
+                        
+                        print(f"✅ Tag deactivated (old schema): {tag_id[:20]}... (status: {current_status} → non_active)")
+                        print(f"   📋 Description: {description}")
+                    else:
+                        print(f"⚠️  No active records found for tag or tag is already non_active: {tag_id[:20]}...")
+                        return False
+                
+                conn.commit()
+                return True
+                    
+        except Exception as e:
+            print(f"❌ Database error in deactivate_tag: {e}")
             if conn:
                 conn.rollback()
             return False

@@ -11,7 +11,7 @@ import threading
 import time
 import json
 from datetime import datetime
-from shared_data import get_web_data, get_statistics, get_pending_registrations, register_tag, skip_tag_registration
+from shared_data import get_web_data, get_statistics, get_pending_registrations, register_tag, skip_tag_registration, set_page_mode, get_page_mode
 from database import get_database
 
 app = Flask(__name__)
@@ -119,22 +119,47 @@ def stop_broadcasting():
 @app.route('/')
 def index():
     """Main system dashboard - entry point"""
+    # Reset to normal mode when returning to main dashboard
+    set_page_mode("normal")
     return render_template('main_dashboard.html')
 
 @app.route('/register')
 def register_dashboard():
     """RFID registration dashboard"""
+    # Set normal mode for registration
+    set_page_mode("normal")
     return render_template('dashboard.html')
 
 @app.route('/delete')
 def delete_dashboard():
     """RFID tag deletion dashboard"""
+    # Set normal mode for deletion
+    set_page_mode("normal")
     return render_template('delete_dashboard.html')
+
+@app.route('/status')
+def status_dashboard():
+    """RFID tag status workflow dashboard"""
+    # Set normal mode for status workflow
+    set_page_mode("normal")
+    return render_template('status_dashboard.html')
+
+@app.route('/deactivate')
+def deactivate_dashboard():
+    """RFID tag deactivation dashboard - change any status to non_active with description"""
+    # Set automatic deactivation mode when this page is accessed
+    set_page_mode("auto_deactivate")
+    return render_template('deactivate_dashboard.html')
 
 @app.route('/api/status')
 def api_status():
     """API endpoint for current status"""
     return jsonify(get_web_data())
+
+@app.route('/api/mode')
+def api_mode():
+    """API endpoint for current page mode"""
+    return jsonify({'mode': get_page_mode()})
 
 @app.route('/api/database/stats')
 def api_database_stats():
@@ -392,6 +417,32 @@ def api_update_tag_status():
                 return jsonify({'success': True, 'message': f'Tag status updated to "{status}"'})
             else:
                 return jsonify({'success': False, 'error': 'Failed to update tag status'})
+        else:
+            return jsonify({'success': False, 'error': 'Database not connected'})
+            
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/api/deactivate-tag', methods=['POST'])
+def api_deactivate_tag():
+    """Deactivate a tag (change ANY status to non_active and store last status in description)"""
+    try:
+        data = request.get_json()
+        tag_id = data.get('tag_id')
+        
+        if not tag_id:
+            return jsonify({'success': False, 'error': 'Tag ID is required'})
+        
+        if db:
+            success = db.deactivate_tag(tag_id)
+            if success:
+                # Also update shared data to reflect the change
+                from shared_data import unregister_tag_from_shared_data
+                unregister_tag_from_shared_data(tag_id)
+                
+                return jsonify({'success': True, 'message': f'Tag deactivated successfully: {tag_id[:20]}... (status changed to non_active with description)'})
+            else:
+                return jsonify({'success': False, 'error': 'Failed to deactivate tag or tag not found/already non_active'})
         else:
             return jsonify({'success': False, 'error': 'Database not connected'})
             
