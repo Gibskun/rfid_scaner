@@ -381,6 +381,45 @@
             border-radius: 4px;
         }
 
+        .historical-data-section {
+            margin: 20px 0;
+            padding: 15px;
+            background: #e6fffa;
+            border: 1px solid #38b2ac;
+            border-radius: 8px;
+        }
+
+        .historical-header h4 {
+            color: #2c7a7b;
+            margin: 0 0 8px 0;
+            font-size: 1.1em;
+        }
+
+        .historical-note {
+            color: #2d3748;
+            font-size: 0.9em;
+            margin: 0 0 15px 0;
+            font-style: italic;
+        }
+
+        .historical-info {
+            background: #f0fdfa;
+            padding: 12px;
+            border-radius: 6px;
+            border: 1px solid #b2f5ea;
+        }
+
+        .historical-info p {
+            margin: 5px 0;
+            color: #2d3748;
+            font-size: 0.95em;
+        }
+
+        .historical-info strong {
+            color: #2c7a7b;
+            font-weight: 600;
+        }
+
         .input-group {
             margin-bottom: 20px;
         }
@@ -595,7 +634,21 @@
                 <div class="tag-registration-info">
                     <p><strong>Tag ID:</strong> <span id="modalTagId">-</span></p>
                     <p><strong>Detection Time:</strong> <span id="modalDetectionTime">-</span></p>
-                    <p class="registration-note">⚠️ This tag is not registered in the database. Please provide the registration details.</p>
+                    <p id="registrationNote" class="registration-note">⚠️ This tag is not registered in the database. Please provide the registration details.</p>
+                </div>
+                
+                <!-- Historical Data Section for Reused Tags -->
+                <div id="historicalDataSection" class="historical-data-section" style="display: none;">
+                    <div class="historical-header">
+                        <h4>📋 Previous Usage History</h4>
+                        <p class="historical-note">This tag was previously used and deactivated. The data below is for reference only.</p>
+                    </div>
+                    <div class="historical-info">
+                        <p><strong>Previous RFID:</strong> <span id="previousRfId">-</span></p>
+                        <p><strong>Previous Name:</strong> <span id="previousName">-</span></p>
+                        <p><strong>Previous Palette:</strong> <span id="previousPalette">-</span></p>
+                        <p><strong>Deactivated:</strong> <span id="deactivatedDate">-</span></p>
+                    </div>
                 </div>
                 
                 <div class="input-group">
@@ -792,6 +845,33 @@
             // Update modal content
             document.getElementById('modalTagId').textContent = tagData.tag_hex;
             document.getElementById('modalDetectionTime').textContent = new Date().toLocaleString();
+            
+            // Check if this is a reused tag with historical data
+            const isReusedTag = tagData.was_reused;
+            const historicalSection = document.getElementById('historicalDataSection');
+            const registrationNote = document.getElementById('registrationNote');
+            
+            if (isReusedTag && tagData.previous_rf_id) {
+                // Show historical data section
+                historicalSection.style.display = 'block';
+                document.getElementById('previousRfId').textContent = tagData.previous_rf_id || '-';
+                document.getElementById('previousName').textContent = tagData.previous_name || 'Not specified';
+                document.getElementById('previousPalette').textContent = tagData.previous_palette ? `#${tagData.previous_palette}` : 'Not specified';
+                document.getElementById('deactivatedDate').textContent = tagData.deactivated_date ? new Date(tagData.deactivated_date).toLocaleString() : '-';
+                
+                // Update registration note for reused tag
+                registrationNote.innerHTML = '🔄 This tag was previously used and can be reused with new data. Previous usage data is shown below for reference.';
+                registrationNote.style.color = '#2c7a7b';
+                registrationNote.style.background = '#e6fffa';
+                registrationNote.style.borderLeftColor = '#38b2ac';
+            } else {
+                // Hide historical data section for new tags
+                historicalSection.style.display = 'none';
+                registrationNote.innerHTML = '⚠️ This tag is not registered in the database. Please provide the registration details.';
+                registrationNote.style.color = '#d69e2e';
+                registrationNote.style.background = '#fef5e7';
+                registrationNote.style.borderLeftColor = '#d69e2e';
+            }
             
             // Clear input fields
             document.getElementById('rfIdInput').value = '';

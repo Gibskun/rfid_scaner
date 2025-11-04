@@ -19,8 +19,8 @@ import os
 from typing import Dict, Set
 from datetime import datetime
 from shared_data import (
-    update_connection_status, update_scanning_status, add_tag_detection,
-    cleanup_old_tags, update_scan_statistics, get_statistics
+    update_connection_status, update_scanning_status, add_tag_detection_with_status_cycling,
+    cleanup_old_tags, update_scan_statistics, get_statistics, is_scanning_enabled, get_active_page
 )
 
 class FastRFIDScanner:
@@ -121,8 +121,8 @@ class FastRFIDScanner:
                 # Check if this is a new tag for terminal display
                 is_new_tag = tag_hex not in self.active_tags
                 
-                # Update shared data system (for web interface)
-                add_tag_detection(tag_hex, tag, self.db)
+                # Update shared data system (for web interface) with production workflow
+                add_tag_detection_with_status_cycling(tag_hex, tag, self.db)
                 
                 # Update local tracking
                 if tag_hex in self.active_tags:
@@ -207,8 +207,13 @@ class FastRFIDScanner:
     
     def run_continuous_scan(self):
         """Run continuous fast scanning with shared data updates"""
-        print("🚀 Starting fast continuous scanning...")
-        print("📡 Optimized for quick detection and distance tracking")
+        print("🚀 Starting RFID scanner service...")
+        print("📡 Waiting for users to access RFID pages...")
+        print("� Scanning will start automatically when users enter:")
+        print("   • Registration System (http://localhost:5000/register)")
+        print("   • Status Workflow (http://localhost:5000/status)")
+        print("   • Deactivate Tags (http://localhost:5000/deactivate)")
+        print("   • Delete Tags (http://localhost:5000/delete)")
         print("⏹️  Press Ctrl+C to stop")
         print()
         
@@ -229,6 +234,22 @@ class FastRFIDScanner:
                 if self.pause_scanning:
                     time.sleep(0.1)
                     continue
+                
+                # CHECK IF SCANNING IS ENABLED BY WEB INTERFACE
+                if not is_scanning_enabled():
+                    # Scanning disabled - wait and check again
+                    # Only print waiting message once when scanning stops
+                    if hasattr(self, '_scanning_active') and self._scanning_active:
+                        print(f"⏸️  Scanning paused - waiting for user to access RFID pages...")
+                        self._scanning_active = False
+                    time.sleep(0.5)  # Check every 500ms
+                    continue
+                else:
+                    # Scanning enabled - print message once when it starts
+                    if not hasattr(self, '_scanning_active') or not self._scanning_active:
+                        active_page = get_active_page()
+                        print(f"▶️  Scanning started - user on page: {active_page}")
+                        self._scanning_active = True
                 
                 scan_start = time.time()
                 scan_count += 1

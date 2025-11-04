@@ -11,7 +11,7 @@ import threading
 import time
 import json
 from datetime import datetime
-from shared_data import get_web_data, get_statistics, get_pending_registrations, register_tag, skip_tag_registration, set_page_mode, get_page_mode
+from shared_data import get_web_data, get_statistics, get_pending_registrations, register_tag, skip_tag_registration, set_page_mode, get_page_mode, set_scanning_enabled, is_scanning_enabled, get_active_page
 from database import get_database
 
 app = Flask(__name__)
@@ -119,37 +119,50 @@ def stop_broadcasting():
 @app.route('/')
 def index():
     """Main system dashboard - entry point"""
-    # Reset to normal mode when returning to main dashboard
+    # Reset to normal mode and DISABLE scanning when on main dashboard
     set_page_mode("normal")
+    set_scanning_enabled(False, "main")
     return render_template('main_dashboard.html')
 
 @app.route('/register')
 def register_dashboard():
     """RFID registration dashboard"""
-    # Set normal mode for registration
+    # Set normal mode and ENABLE scanning for registration
     set_page_mode("normal")
+    set_scanning_enabled(True, "register")
     return render_template('dashboard.html')
 
 @app.route('/delete')
 def delete_dashboard():
     """RFID tag deletion dashboard"""
-    # Set normal mode for deletion
+    # Set normal mode and ENABLE scanning for deletion
     set_page_mode("normal")
+    set_scanning_enabled(True, "delete")
     return render_template('delete_dashboard.html')
 
-@app.route('/status')
-def status_dashboard():
-    """RFID tag status workflow dashboard"""
-    # Set normal mode for status workflow
+@app.route('/production')
+def production_dashboard():
+    """RFID On Production dashboard - changes active tags to on production"""
+    # Set normal mode and ENABLE scanning for production workflow
     set_page_mode("normal")
-    return render_template('status_dashboard.html')
+    set_scanning_enabled(True, "production")
+    return render_template('production_dashboard.html')
 
-@app.route('/deactivate')
-def deactivate_dashboard():
-    """RFID tag deactivation dashboard - change any status to non_active with description"""
-    # Set automatic deactivation mode when this page is accessed
-    set_page_mode("auto_deactivate")
-    return render_template('deactivate_dashboard.html')
+@app.route('/unregister')
+def unregister_dashboard():
+    """RFID Tag Unregister dashboard - automatically changes all detected tags to non_active"""
+    # Set automatic unregister mode and ENABLE scanning for unregistration
+    set_page_mode("auto_unregister")
+    set_scanning_enabled(True, "unregister")
+    return render_template('unregister_dashboard.html')
+
+@app.route('/frequency')
+def frequency_dashboard():
+    """RFID tag frequency analysis dashboard - displays detection frequency of tags"""
+    # Set normal mode and ENABLE scanning for frequency analysis
+    set_page_mode("normal")
+    set_scanning_enabled(True, "frequency")
+    return render_template('frequency_dashboard.html')
 
 @app.route('/api/status')
 def api_status():
@@ -160,6 +173,15 @@ def api_status():
 def api_mode():
     """API endpoint for current page mode"""
     return jsonify({'mode': get_page_mode()})
+
+@app.route('/api/scanning-status')
+def api_scanning_status():
+    """API endpoint for current scanning status"""
+    return jsonify({
+        'scanning_enabled': is_scanning_enabled(),
+        'active_page': get_active_page(),
+        'page_mode': get_page_mode()
+    })
 
 @app.route('/api/database/stats')
 def api_database_stats():
@@ -423,9 +445,9 @@ def api_update_tag_status():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
-@app.route('/api/deactivate-tag', methods=['POST'])
-def api_deactivate_tag():
-    """Deactivate a tag (change ANY status to non_active and store last status in description)"""
+@app.route('/api/auto-unregister-tag', methods=['POST'])
+def api_auto_unregister_tag():
+    """Auto-unregister a tag (change ANY status to non_active and store last status in description)"""
     try:
         data = request.get_json()
         tag_id = data.get('tag_id')
@@ -440,9 +462,9 @@ def api_deactivate_tag():
                 from shared_data import unregister_tag_from_shared_data
                 unregister_tag_from_shared_data(tag_id)
                 
-                return jsonify({'success': True, 'message': f'Tag deactivated successfully: {tag_id[:20]}... (status changed to non_active with description)'})
+                return jsonify({'success': True, 'message': f'Tag unregistered successfully: {tag_id[:20]}... (status changed to non_active with description)'})
             else:
-                return jsonify({'success': False, 'error': 'Failed to deactivate tag or tag not found/already non_active'})
+                return jsonify({'success': False, 'error': 'Failed to unregister tag or tag not found/already non_active'})
         else:
             return jsonify({'success': False, 'error': 'Database not connected'})
             
@@ -468,6 +490,72 @@ def api_restore_tag():
         else:
             return jsonify({'success': False, 'error': 'Database not connected'})
             
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/api/frequency-analysis')
+def api_frequency_analysis():
+    """Get frequency analysis data for detected tags"""
+    try:
+        data = get_web_data()
+        frequency_data = []
+        
+        # Extract frequency information from active tags
+        for tag_id, tag_info in data.get('active_tags', {}).items():
+            # Calculate detection rate (frequency)
+            count = tag_info.get('count', 0)
+            duration = tag_info.get('duration', 1)
+            detection_rate = count / max(1, duration)  # Hz (detections per second)
+            
+            frequency_data.append({
+                'tag_id': tag_info.get('id', tag_id[:20] + "..."),
+                'full_tag_id': tag_info.get('full_id', tag_id),
+                'rf_id': tag_info.get('rf_id', 'N/A'),
+                'name': tag_info.get('name', 'Unnamed'),
+                'detection_count': count,
+                'duration_seconds': round(duration, 2),
+                'detection_frequency_hz': round(detection_rate, 3),
+                'signal_strength': tag_info.get('signal_strength', 'Unknown'),
+                'first_seen': tag_info.get('first_seen', ''),
+                'last_seen': tag_info.get('last_seen', ''),
+                'is_registered': tag_info.get('is_registered', False),
+                'status': tag_info.get('status', 'unregistered')
+            })
+        
+        # Sort by detection frequency (highest first)
+        frequency_data.sort(key=lambda x: x['detection_frequency_hz'], reverse=True)
+        
+        # Calculate statistics
+        total_tags = len(frequency_data)
+        avg_frequency = sum(tag['detection_frequency_hz'] for tag in frequency_data) / max(1, total_tags)
+        max_frequency = max((tag['detection_frequency_hz'] for tag in frequency_data), default=0)
+        min_frequency = min((tag['detection_frequency_hz'] for tag in frequency_data), default=0)
+        
+        # Count by signal strength
+        strong_count = sum(1 for tag in frequency_data if tag['signal_strength'] == 'Strong')
+        medium_count = sum(1 for tag in frequency_data if tag['signal_strength'] == 'Medium')
+        weak_count = sum(1 for tag in frequency_data if tag['signal_strength'] == 'Weak')
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'tags': frequency_data,
+                'statistics': {
+                    'total_tags': total_tags,
+                    'average_frequency': round(avg_frequency, 3),
+                    'max_frequency': round(max_frequency, 3),
+                    'min_frequency': round(min_frequency, 3),
+                    'strong_signals': strong_count,
+                    'medium_signals': medium_count,
+                    'weak_signals': weak_count
+                },
+                'scan_info': {
+                    'total_scans': data.get('statistics', {}).get('total_scans', 0),
+                    'total_detections': data.get('statistics', {}).get('total_detections', 0),
+                    'scan_rate': data.get('statistics', {}).get('scan_rate', 0)
+                }
+            }
+        })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 

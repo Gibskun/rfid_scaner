@@ -241,9 +241,9 @@
         <h1>RFID System</h1>
         <p class="subtitle">Professional RFID Tag Management & Registration System</p>
 
-        <div class="system-status">
-            <div class="status-indicator"></div>
-            <span>System Ready</span>
+        <div class="system-status" id="system-status">
+            <div class="status-indicator" id="status-indicator"></div>
+            <span id="status-text">System Ready</span>
         </div>
 
         <div class="system-info">
@@ -279,11 +279,14 @@
             <a href="/register" class="btn btn-primary">
                 🏷️ Enter RFID Registration System
             </a>
-            <a href="/status" class="btn btn-primary" style="background: linear-gradient(135deg, #48bb78, #38a169);">
-                🔄 Status Workflow Dashboard
+            <a href="/production" class="btn btn-primary" style="background: linear-gradient(135deg, #48bb78, #38a169);">
+                🏭 RFID On Production
             </a>
-            <a href="/deactivate" class="btn btn-primary" style="background: linear-gradient(135deg, #9f7aea, #805ad5);">
-                🚫 Deactivate Any Status Tags
+            <a href="/frequency" class="btn btn-primary" style="background: linear-gradient(135deg, #f6ad55, #ed8936);">
+                📡 Frequency Analysis Dashboard
+            </a>
+            <a href="/unregister" class="btn btn-primary" style="background: linear-gradient(135deg, #9f7aea, #805ad5);">
+                �️ RFID Tag Unregister
             </a>
             <button class="btn btn-secondary" onclick="showAbout()">
                 ℹ️ About System
@@ -353,13 +356,43 @@ Click "Enter RFID Registration System" to begin scanning and registering RFID ta
                     const scanStatus = document.getElementById('scan-status');
                     const dbStatus = document.getElementById('db-status');
                     
-                    if (data.scanner_connected) {
-                        scanStatus.textContent = data.scanning_active ? 
-                            'Scanner connected and actively scanning' : 
-                            'Scanner connected, ready to scan';
-                    } else {
-                        scanStatus.textContent = 'Scanner ready to connect';
-                    }
+                    // Check scanning status from API
+                    fetch('/api/scanning-status')
+                        .then(response => response.json())
+                        .then(scanData => {
+                            const systemStatus = document.getElementById('system-status');
+                            const statusIndicator = document.getElementById('status-indicator');
+                            const statusText = document.getElementById('status-text');
+                            
+                            if (scanData.scanning_enabled) {
+                                scanStatus.textContent = `🔄 Actively scanning on ${scanData.active_page} page`;
+                                scanStatus.style.color = '#48bb78'; // Green
+                                
+                                // Update system status to scanning
+                                statusText.textContent = `Scanning Active (${scanData.active_page})`;
+                                systemStatus.style.background = 'rgba(72, 187, 120, 0.1)';
+                                systemStatus.style.borderColor = 'rgba(72, 187, 120, 0.3)';
+                                statusIndicator.style.background = '#48bb78';
+                            } else {
+                                scanStatus.textContent = '⏸️ Waiting for user to enter RFID pages';
+                                scanStatus.style.color = '#ed8936'; // Orange
+                                
+                                // Update system status to waiting
+                                statusText.textContent = 'System Ready - Click buttons to start scanning';
+                                systemStatus.style.background = 'rgba(237, 137, 54, 0.1)';
+                                systemStatus.style.borderColor = 'rgba(237, 137, 54, 0.3)';
+                                statusIndicator.style.background = '#ed8936';
+                            }
+                        })
+                        .catch(() => {
+                            if (data.scanner_connected) {
+                                scanStatus.textContent = data.scanning_active ? 
+                                    'Scanner connected and actively scanning' : 
+                                    'Scanner connected, ready to scan';
+                            } else {
+                                scanStatus.textContent = 'Scanner ready to connect';
+                            }
+                        });
                     
                     if (dbTags > 0) {
                         dbStatus.textContent = `Database connected with ${dbTags} registered tags`;

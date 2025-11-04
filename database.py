@@ -719,10 +719,10 @@ class RFIDDatabase:
                 has_id_column = cursor.fetchone() is not None
                 
                 if has_id_column:
-                    # New schema - find the most recent active record for this tag
+                    # New schema - find the most recent active or production record for this tag
                     cursor.execute("""
                         SELECT id, status FROM rfid_tags 
-                        WHERE tag_id = %s AND status = 'active'
+                        WHERE tag_id = %s AND status IN ('active', 'on production')
                         ORDER BY created DESC
                         LIMIT 1
                     """, (tag_id,))
@@ -737,9 +737,9 @@ class RFIDDatabase:
                             WHERE id = %s
                         """, (record_id,))
                         
-                        print(f"✅ Tag unregistered (new schema): {tag_id[:20]}... (record ID: {record_id}, status: active → non_active)")
+                        print(f"✅ Tag unregistered (new schema): {tag_id[:20]}... (record ID: {record_id}, status: {current_status} → non_active)")
                     else:
-                        print(f"⚠️  No active records found for tag: {tag_id[:20]}...")
+                        print(f"⚠️  No active/production records found for tag: {tag_id[:20]}...")
                         return False
                         
                 else:
@@ -747,13 +747,13 @@ class RFIDDatabase:
                     cursor.execute("""
                         UPDATE rfid_tags 
                         SET deleted = CURRENT_TIMESTAMP, status = 'non_active'
-                        WHERE tag_id = %s AND status = 'active'
+                        WHERE tag_id = %s AND status IN ('active', 'on production')
                     """, (tag_id,))
                     
                     if cursor.rowcount > 0:
-                        print(f"✅ Tag unregistered (old schema): {tag_id[:20]}... (status: active → non_active)")
+                        print(f"✅ Tag unregistered (old schema): {tag_id[:20]}... (status: any → non_active)")
                     else:
-                        print(f"⚠️  No active records found for tag: {tag_id[:20]}...")
+                        print(f"⚠️  No active/production records found for tag: {tag_id[:20]}...")
                         return False
                 
                 conn.commit()
